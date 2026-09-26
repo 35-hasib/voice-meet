@@ -532,6 +532,13 @@ the UI warns that connections may fail.
 - `DATABASE_URL` and TURN secrets are server-side only. HTTPS/WSS are required
   in production; browsers also require a secure context for microphone access
   on non-localhost origins.
+- `npm audit` reports 0 vulnerabilities. Prisma CLI 6.19.3 pulls in
+  `deepmerge-ts@7.1.5`, which has a published stack-exhaustion advisory
+  (GHSA-ggr8-5vv4-36mx) reachable only from `@prisma/config` at build time. A
+  `package.json` `overrides` entry pins `deepmerge-ts` to `^8.0.0`; `prisma
+  generate`, `prisma validate`, and `prisma migrate status` were re-verified
+  against that version. Remove the override only when a Prisma release resolves
+  the advisory upstream.
 
 ## 16. Deployment
 
@@ -549,10 +556,18 @@ NEXT_PUBLIC_STUN_SERVER_URL=stun:stun.example.com:3478
 ```
 
 4. Redeploy after changing `NEXT_PUBLIC_` values; they are inlined at build time.
-5. Add the Vercel production URL to the backend `FRONTEND_URL` allowlist.
+5. Add the Vercel production URL to the backend `FRONTEND_URL` allowlist. The
+   value must be a bare origin such as `https://your-app.vercel.app` — no path,
+   query string, fragment, or credentials. Multiple origins are comma-separated.
+   Add `http://localhost:3000` as well if you want to test a local frontend
+   against the deployed backend.
 
 Do not run a persistent Socket.IO server inside Next.js route handlers or Vercel
-serverless functions.
+serverless functions. Vercel's WebSocket support is a public beta where each
+connection is pinned to a single function instance, so `io.to(room).emit(...)`
+does not reliably reach participants held on other instances. Hosting the
+backend on a persistent host avoids this; running it entirely on Vercel would
+require a Socket.IO Redis adapter plus shared participant and rate-limit state.
 
 ### Backend → Render (recommended simple option)
 
@@ -587,6 +602,32 @@ Create a Neon project, copy the pooled connection string into the backend
 Neon's pooled URLs work with Prisma; add `?pgbouncer=true` if you use the
 transaction pooler.
 
+### Verified against the live production deployment
+
+The backend was deployed to Render with Neon PostgreSQL and re-verified from
+outside the deployment. All 18 checks passed against the public URL:
+
+- `GET /health` returns `200`.
+- `POST /api/meetings` returns `201` and persists a row in Neon.
+- `GET` returns `200` for the new code, `400` for a malformed code, and `404`
+  for an unknown code.
+- CORS returns `403` for an origin that is not in `FRONTEND_URL`.
+- `GET /api/rtc/credentials` returns the configured STUN server and exposes no
+  secret material.
+- Two real Socket.IO clients over WebSocket: both `meeting:join` acks succeed,
+  the second participant sees the first, `participant:joined` is broadcast,
+  `webrtc:offer` is relayed to the addressed participant, `participant:state`
+  broadcasts, `participant:left` fires on disconnect, and the meeting is still
+  resolvable after the room empties.
+
+Two operational notes learned from the live deployment:
+
+- `GET /api/meetings` returns `404 ROUTE_NOT_FOUND`; that path only accepts
+  `POST`. Use `curl -X POST` when smoke-testing.
+- `FRONTEND_URL` must be a bare origin. A value carrying a path, query string,
+  fragment, or credentials is rejected at startup, and the error names the
+  offending entry.
+
 ## 17. Testing
 
 ### Automated checks that were run
@@ -599,15 +640,17 @@ frontend: npm run build       pass (Next.js 16.3.6 production build)
 
 backend:  npm run lint        pass
 backend:  npm run typecheck   pass
-backend:  npm test            pass (32 tests across 8 files)
+backend:  npm test            pass (34 tests across 8 files)
 backend:  npm run build       pass
 ```
 
 Backend tests cover code generation and conflict retry, REST create/get, 400 /
 404 / 410 handling, CORS allow/deny, rate limiting, ICE credential validation,
 STUN/TURN URL parsing in both `stun:host:port` and `stun://host:port` forms,
-Socket.IO payload schemas, per-socket rate limits, and the guarantee that
-leaving a participant never deletes the meeting record.
+Socket.IO payload schemas, per-socket rate limits, CORS origin-format rejection
+(trailing slashes allowed; paths, queries, fragments, and credentials rejected
+with the offending entry named), and the guarantee that leaving a participant
+never deletes the meeting record.
 
 ### Verified against a real PostgreSQL database
 
@@ -744,3 +787,8 @@ connections (for example a symmetric NAT or restrictive corporate Wi-Fi).
 - Still unverified: TURN traversal from a symmetric NAT or restrictive network,
   and behavior on physical phones and browsers other than Chromium. Those need
   real devices and real networks.
+- The deployed backend was verified from outside the deployment: 18/18 live
+  production checks pass against the Render URL with Neon PostgreSQL, including
+  real two-client WebSocket signaling. The frontend has not yet been verified in
+  a browser against the deployed backend, because it still needs to be imported
+  into Vercel and the resulting origin added to `FRONTEND_URL`.

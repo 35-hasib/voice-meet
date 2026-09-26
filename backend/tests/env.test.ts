@@ -33,6 +33,48 @@ describe("environment configuration", () => {
     ).toThrow(/wildcard/i);
   });
 
+  it("accepts a bare origin with or without a trailing slash", () => {
+    const config = loadConfig({
+      DATABASE_URL,
+      FRONTEND_URL: "https://voice.example.com/,https://app.vercel.app",
+    });
+
+    expect(config.frontendUrls).toEqual([
+      "https://voice.example.com",
+      "https://app.vercel.app",
+    ]);
+  });
+
+  it("names the offending entry and the reason it is invalid", () => {
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL: "https://app.vercel.app/meet/abc123",
+      }),
+    ).toThrow(/entry "https:\/\/app\.vercel\.app\/meet\/abc123".*must not contain the path/s);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL: "voice-meet-xxx.vercel.app",
+      }),
+    ).toThrow(/entry "voice-meet-xxx\.vercel\.app" is not a valid URL/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL: "https://user:pass@app.vercel.app",
+      }),
+    ).toThrow(/must not contain a username or password/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL: "https://app.vercel.app?utm=x",
+      }),
+    ).toThrow(/must not contain a query string/);
+  });
+
   it("requires complete TURN REST configuration", () => {
     expect(() =>
       loadConfig({

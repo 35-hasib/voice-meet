@@ -69,36 +69,53 @@ function validateDatabaseUrl(value: string): void {
   }
 }
 
+const ORIGIN_EXAMPLE = "https://your-app.vercel.app";
+
 function parseFrontendUrls(value: string): string[] {
-  const origins = splitUrls(value, "FRONTEND_URL").map((origin) => {
-    if (origin === "*") {
+  const origins = splitUrls(value, "FRONTEND_URL").map((entry) => {
+    if (entry === "*") {
       configurationError(["FRONTEND_URL cannot contain a wildcard"]);
     }
 
+    let parsed: URL;
+
     try {
-      const parsed = new URL(origin);
-
-      if (
-        (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-        parsed.username.length > 0 ||
-        parsed.password.length > 0 ||
-        parsed.pathname !== "/" ||
-        parsed.search.length > 0 ||
-        parsed.hash.length > 0
-      ) {
-        configurationError([
-          "FRONTEND_URL entries must be HTTP(S) origins without credentials, paths, queries, or fragments",
-        ]);
-      }
-
-      return parsed.origin;
-    } catch (error: unknown) {
-      if (error instanceof Error && error.message.startsWith("Invalid environment configuration:")) {
-        throw error;
-      }
-
-      configurationError(["FRONTEND_URL contains an invalid URL"]);
+      parsed = new URL(entry);
+    } catch {
+      configurationError([
+        `FRONTEND_URL entry "${entry}" is not a valid URL. Use a bare origin such as ${ORIGIN_EXAMPLE}`,
+      ]);
     }
+
+    const problems: string[] = [];
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      problems.push("must start with http:// or https://");
+    }
+
+    if (parsed.username.length > 0 || parsed.password.length > 0) {
+      problems.push("must not contain a username or password");
+    }
+
+    if (parsed.pathname !== "/" && parsed.pathname !== "") {
+      problems.push(`must not contain the path "${parsed.pathname}"`);
+    }
+
+    if (parsed.search.length > 0) {
+      problems.push("must not contain a query string");
+    }
+
+    if (parsed.hash.length > 0) {
+      problems.push("must not contain a # fragment");
+    }
+
+    if (problems.length > 0) {
+      configurationError([
+        `FRONTEND_URL entry "${entry}" ${problems.join("; ")}. Use a bare origin such as ${ORIGIN_EXAMPLE}`,
+      ]);
+    }
+
+    return parsed.origin;
   });
 
   return [...new Set(origins)];
