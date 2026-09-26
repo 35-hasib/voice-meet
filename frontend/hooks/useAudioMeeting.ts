@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { SERVICE_NOT_CONFIGURED_MESSAGE, SOCKET_URL } from "@/lib/config";
-import { resolveIceConfiguration } from "@/lib/ice-servers";
+import { resolveIceConfiguration, type ResolvedIceConfiguration } from "@/lib/ice-servers";
 import type { Participant } from "@/types/meeting";
 import type { RtcConnectionState } from "@/types/rtc";
 import type {
@@ -22,6 +22,23 @@ const CONNECTION_ERROR_MESSAGE =
   "Unable to establish an audio connection. Please check your network and try again.";
 const NO_LIVE_MICROPHONE_MESSAGE =
   "Your microphone stream is no longer available. Leave the meeting and rejoin to reconnect your audio.";
+
+/**
+ * STUN alone cannot traverse symmetric NAT or a network that blocks UDP, so
+ * without a TURN server the peer connection silently fails to form and the user
+ * only sees a stalled "connecting" state. Say so up front instead.
+ */
+function buildIceWarning(configuration: ResolvedIceConfiguration): string | null {
+  if (configuration.hadCredentialsError) {
+    return "No STUN or TURN server is available. Connections may fail on restrictive networks.";
+  }
+
+  if (!configuration.hasTurn) {
+    return "No TURN relay is configured. You can connect on most networks, but peers behind a strict firewall or symmetric NAT may fail to connect.";
+  }
+
+  return null;
+}
 
 export type MeetingConnectionStatus =
   | "idle"
@@ -469,11 +486,7 @@ export function useAudioMeeting(options: {
     }
 
     iceServersRef.current = iceConfiguration.iceServers;
-    setIceWarning(
-      iceConfiguration.hadCredentialsError
-        ? "No STUN or TURN server is available. Connections may fail on restrictive networks."
-        : null,
-    );
+    setIceWarning(buildIceWarning(iceConfiguration));
 
     if (SOCKET_URL === null) {
       setStatus("failed");

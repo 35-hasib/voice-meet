@@ -9,6 +9,7 @@ import { FakeMeetingRepository } from "./support/fake-meeting.repository.js";
 const MEETING_CODE = "AAAAAAAAAAAA";
 
 const quietLogger = {
+  info: vi.fn(),
   error: vi.fn(),
 };
 

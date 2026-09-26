@@ -248,9 +248,18 @@ A unique-constraint conflict is retried up to five times.
 | `PORT` | no | Defaults to `4000` |
 | `FRONTEND_URL` | yes | Comma-separated, exact allowed origins, e.g. `http://localhost:3000,https://app.vercel.app` |
 | `STUN_SERVER_URL` | no | Comma-separated STUN URLs returned by the credentials endpoint |
-| `TURN_SERVER_URL` | with TURN | Comma-separated `turn:`/`turns:` URLs |
-| `TURN_SERVER_USERNAME` | with TURN | 1–64 character username prefix, e.g. `audiomeet` |
-| `TURN_SERVER_CREDENTIAL` | with TURN | HMAC shared secret for TURN REST credentials — **never** put this in a `NEXT_PUBLIC_` variable |
+| `TURN_PROVIDER` | no | `static` for self-hosted coturn, `cloudflare` for Cloudflare Realtime TURN. Omit for STUN only |
+| `TURN_SERVER_URL` | static TURN | Comma-separated `turn:`/`turns:` URLs |
+| `TURN_SERVER_USERNAME` | static TURN | 1–64 character persistent identifier, e.g. `audiomeet`. **No `@` and no `:`** |
+| `TURN_SERVER_CREDENTIAL` | static TURN | HMAC shared secret for TURN REST credentials — **never** put this in a `NEXT_PUBLIC_` variable |
+| `CLOUDFLARE_TURN_KEY_ID` | cloudflare TURN | TURN key ID from the Cloudflare dashboard |
+| `CLOUDFLARE_TURN_API_TOKEN` | cloudflare TURN | API token with TURN credential permissions — server-side only |
+| `CLOUDFLARE_TURN_TTL_SECONDS` | no | Credential lifetime, default `86400` (24h), clamped to 300–172800 |
+
+Each TURN block is all-or-nothing: setting only some of its variables, or mixing
+`TURN_PROVIDER=cloudflare` with the static block, fails startup with a message
+naming the problem. `STUN_SERVER_URL` is independent and should be set in both
+cases.
 
 `FRONTEND_URL` is an exact allowlist. `*` is rejected at startup. Requests from
 an origin that is not listed receive `403 CORS_ORIGIN_DENIED`.
@@ -262,6 +271,7 @@ an origin that is not listed receive `403 CORS_ORIGIN_DENIED`.
 | `NEXT_PUBLIC_API_URL` | yes | REST base URL, e.g. `http://localhost:4000` or `https://api.example.com` |
 | `NEXT_PUBLIC_SOCKET_URL` | yes | Socket.IO base URL, normally the same host as the API |
 | `NEXT_PUBLIC_STUN_SERVER_URL` | no | Comma-separated public STUN URLs used directly by the browser |
+| `NEXT_PUBLIC_API_TIMEOUT_MS` | no | REST request deadline in ms, default `30000`, clamped to 5000–120000. Must exceed the API host's cold-start time |
 
 Never place `DATABASE_URL`, `TURN_SERVER_CREDENTIAL`, or any other secret in a
 `NEXT_PUBLIC_` variable. Next.js inlines `NEXT_PUBLIC_` values into the browser
@@ -370,9 +380,19 @@ If TURN is configured, the response also contains a TURN server with a
 **short-lived** username and HMAC-derived credential (5-minute TTL). The shared
 secret is never returned.
 
-### `GET /health`
+### `GET /health` and `GET /api/health`
 
-Liveness endpoint for hosting platforms.
+Liveness endpoints for hosting platforms and for debugging a deployment. Both
+return immediately and touch no database, cache, or socket state, so a slow
+response indicates the Node process itself is unhealthy (typically a cold start)
+rather than a database problem.
+
+```json
+{ "status": "ok", "service": "voice-meet-api" }
+```
+
+`/api/health` is registered ahead of the `/api` rate limiter so that health
+checks can never be throttled.
 
 ## 11. Socket.IO signaling protocol
 
@@ -472,6 +492,16 @@ PostgreSQL, not in the signaling process.
 
 STUN and TURN are both configurable; no provider is hard-coded.
 
+STUN alone is enough only when a direct ICE path exists. Two peers on different
+networks — for example a phone on mobile data behind symmetric NAT and a laptop
+on an office network behind a filtering firewall — often have no direct path, so
+ICE gathers no usable candidate pair, the peer connection never reaches
+`connected`, and the call appears to hang. TURN relays the media in that case.
+
+The lobby and room surfaces a warning when no TURN server is available, because
+the failure otherwise looks like a network glitch rather than missing
+configuration.
+
 ### STUN
 
 `NEXT_PUBLIC_STUN_SERVER_URL` may contain one or more comma-separated STUN URLs.
@@ -480,19 +510,56 @@ The frontend merges those with the servers returned by
 
 ### TURN without exposing long-lived secrets
 
-The backend is configured with:
+TURN is selected by `TURN_PROVIDER`. There are two supported providers.
+
+#### Cloudflare Realtime TURN (managed)
+
+Cloudflare issues TURN keys that **cannot be used as credentials directly**, so
+credentials must be minted through their API and passed through to the browser.
+The backend calls it on demand, caches the result for the credential lifetime,
+and mints a fresh one 5 minutes before expiry.
 
 ```text
-TURN_SERVER_URL=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349
+TURN_PROVIDER=cloudflare
+CLOUDFLARE_TURN_KEY_ID=<TURN key ID>
+CLOUDFLARE_TURN_API_TOKEN=<API token>
+CLOUDFLARE_TURN_TTL_SECONDS=86400
+STUN_SERVER_URL=stun:stun.l.google.com:19302
+```
+
+Create the key and token in the Cloudflare dashboard under Calls → TURN. The API
+token is a long-term secret, so it stays server-side; the browser only ever
+receives the short-lived username and credential that Cloudflare issues.
+
+Their service addresses cover UDP, TCP, and TLS on `turn.cloudflare.com`, which
+means it also reaches peers behind networks that block UDP outright. The first
+1,000 GB of monthly traffic is free, then $0.05/GB.
+
+If Cloudflare is unreachable or rejects the token, the endpoint logs the failure
+and still returns `200` with STUN-only servers. A relay outage therefore degrades
+relay capability instead of preventing anyone from joining, and a transient
+failure is retried on the next request rather than cached.
+
+#### Self-hosted coturn
+
+Configured with:
+
+```text
+TURN_PROVIDER=static
+TURN_SERVER_URL=turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp
 TURN_SERVER_USERNAME=audiomeet
 TURN_SERVER_CREDENTIAL=<shared HMAC secret>
 ```
 
 `TURN_SERVER_CREDENTIAL` is treated as a **shared secret**, not as a static
 password. When the browser requests ICE credentials, the backend generates a
-username of the form `<prefix>:<expiry-unix-time>` and an
+username of the form `<expiry-unix-time>:<prefix>` and an
 `HMAC-SHA1(secret, username)` credential with a 5-minute TTL. Only that
 short-lived result is returned to the browser.
+
+The order matters: the TURN server reads the text **before** the first colon as
+the expiry timestamp. Emitting `<prefix>:<expiry>` makes the timestamp
+non-numeric, and coturn refuses every allocation as already expired.
 
 A browser must ultimately know the credential it uses for a TURN allocation, so
 the credential is delivered at runtime through the protected endpoint rather
@@ -502,6 +569,57 @@ TURN is optional for development. It is strongly recommended in production
 because some corporate, symmetric-NAT, and mobile networks cannot establish a
 direct peer connection with STUN alone. When no STUN or TURN server is available,
 the UI warns that connections may fail.
+
+### Running a TURN server that matches this scheme
+
+Any server speaking the TURN REST API works. The closest match to the shared
+secret above is `coturn` started in auth-secret mode, which accepts exactly the
+`<prefix>:<expiry>` usernames this backend mints:
+
+```bash
+docker run -d --name coturn --restart unless-stopped \
+  -p 3478:3478/udp -p 3478:3478/tcp -p 5349:5349/tcp \
+  -e TURN_SECRET="$(openssl rand -hex 32)" \
+  coturn/coturn -n \
+    --listening-port=3478 \
+    --tls-listening-port=5349 \
+    --fingerprint \
+    --use-auth-secret \
+    --static-auth-secret="$TURN_SECRET" \
+    --realm=turn.example.com \
+    --external-ip=<your-public-ip> \
+    --min-port=49160 --max-port=49200 \
+    --no-multicast-peers \
+    --no-cli
+```
+
+`--external-ip` matters when the container sits behind NAT, and the
+`--min-port`/`--max-port` range must be forwarded on the host. Include the `turns:`
+(TLS) URL as well as `turn:` so clients behind networks that block UDP can still
+relay over TCP, and expect the public host to need a real static IP — this is
+roughly the cost of a small VPS.
+
+Then set the three backend variables and restart:
+
+```text
+TURN_SERVER_URL=turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp,turns:turn.example.com:5349?transport=tcp
+TURN_SERVER_USERNAME=audiomeet
+TURN_SERVER_CREDENTIAL=<the same value as TURN_SECRET>
+```
+
+`TURN_SERVER_USERNAME` is only the persistent identifier, must be 1-64 characters matching
+`[A-Za-z0-9._~-]`, and must not contain `@` or `:`. All three variables are
+required together; setting one or two fails startup with a clear message.
+
+Verify that the backend is now issuing relay credentials:
+
+```bash
+curl -s "https://api.example.com/api/rtc/credentials?meetingCode=$CODE"
+```
+
+Each entry that carries a `username` and `credential` is a TURN server. The
+expiry is embedded in the username and rotates on every call, so a value that
+never changes means the server variables were not picked up.
 
 ## 15. Security model
 
@@ -628,6 +746,27 @@ Two operational notes learned from the live deployment:
   fragment, or credentials is rejected at startup, and the error names the
   offending entry.
 
+### Diagnosing a slow or timing-out first request
+
+A first request to a free-tier Render service can take far longer than any
+subsequent one, because the instance is suspended after roughly 15 minutes of
+inactivity and must boot before it can answer. Measured on this deployment: a
+request that arrived while the instance was asleep exceeded the browser's request
+deadline, while the same endpoint answered in 2.4s once the instance was warm.
+
+That failure mode looks like a broken server but is not one. Distinguish it with:
+
+- `curl -w "%{time_total}"` against `/api/health`, twice. The first is slow and
+  the second is fast means a cold start, not a hung request.
+- The server logs now print `PostgreSQL connected in <n>ms` at startup and
+  `POST /api/meetings: done in <n>ms` per request, so a slow request is
+  attributable to a specific step instead of guesswork.
+
+The client deadline is `NEXT_PUBLIC_API_TIMEOUT_MS` (default 30s) and must stay
+above the worst-case cold start. The durable fix is a paid Render instance, which
+does not suspend; a free instance also drops live WebSocket calls when it
+suspends.
+
 ## 17. Testing
 
 ### Automated checks that were run
@@ -640,7 +779,7 @@ frontend: npm run build       pass (Next.js 16.3.6 production build)
 
 backend:  npm run lint        pass
 backend:  npm run typecheck   pass
-backend:  npm test            pass (34 tests across 8 files)
+backend:  npm test            pass (46 tests across 8 files)
 backend:  npm run build       pass
 ```
 

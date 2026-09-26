@@ -30,7 +30,7 @@ function createTestApp(repository: FakeMeetingRepository): Express {
     meetingService,
     credentialsService,
     frontendUrls: [FRONTEND_URL],
-    logger: { error: () => undefined },
+    logger: { info: () => undefined, error: () => undefined },
   });
 }
 
@@ -199,5 +199,34 @@ describe("meeting API", () => {
         message: "Route not found",
       },
     });
+  });
+
+  it("serves a fast liveness probe at /api/health and /health", async () => {
+    const repository = new FakeMeetingRepository();
+    const app = createTestApp(repository);
+    const expected = { status: "ok", service: "voice-meet-api" };
+
+    const apiHealth = await request(app).get("/api/health");
+    expect(apiHealth.status).toBe(200);
+    expect(bodyOf(apiHealth)).toStrictEqual(expected);
+
+    const health = await request(app).get("/health");
+    expect(health.status).toBe(200);
+    expect(bodyOf(health)).toStrictEqual(expected);
+
+    // The probe must not touch the database, so it performs no writes.
+    expect(repository.createInputs).toHaveLength(0);
+  });
+
+  it("does not rate limit the liveness probe", async () => {
+    const app = createTestApp(new FakeMeetingRepository());
+    const statuses: number[] = [];
+
+    for (let attempt = 0; attempt < 320; attempt += 1) {
+      const response = await request(app).get("/api/health");
+      statuses.push(response.status);
+    }
+
+    expect(statuses.every((status) => status === 200)).toBe(true);
   });
 });

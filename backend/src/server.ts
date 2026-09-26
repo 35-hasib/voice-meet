@@ -2,14 +2,31 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { PrismaClient } from "@prisma/client";
 import { createApp } from "./app.js";
-import { loadConfig } from "./config/env.js";
+import { loadConfig, type AppConfig } from "./config/env.js";
 import { defaultLogger } from "./config/logger.js";
 import { PrismaMeetingRepository } from "./repositories/prisma-meeting.repository.js";
-import { IceCredentialsService } from "./services/ice-credentials.service.js";
+import {
+  CloudflareTurnCredentialProvider,
+  IceCredentialsService,
+  StaticTurnCredentialProvider,
+  type TurnCredentialProvider,
+} from "./services/ice-credentials.service.js";
 import { MeetingService } from "./services/meeting.service.js";
 import { createSocketServer } from "./socket/index.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+function createTurnProvider(config: AppConfig): TurnCredentialProvider | null {
+  if (config.turnProviderKind === "cloudflare" && config.cloudflareTurn !== null) {
+    return new CloudflareTurnCredentialProvider(config.cloudflareTurn);
+  }
+
+  if (config.turnProviderKind === "static" && config.turn !== null) {
+    return new StaticTurnCredentialProvider(config.turn);
+  }
+
+  return null;
+}
 
 async function closeSocketServer(
   io: ReturnType<typeof createSocketServer>,
@@ -20,14 +37,27 @@ async function closeSocketServer(
 async function main(): Promise<void> {
   const config = loadConfig();
   const prisma = new PrismaClient();
+  const connectStartedAt = process.hrtime.bigint();
+  defaultLogger.info("Connecting to PostgreSQL");
   await prisma.$connect();
+  const connectElapsedMs = Number(process.hrtime.bigint() - connectStartedAt) / 1e6;
+  defaultLogger.info(
+    `PostgreSQL connected in ${connectElapsedMs.toFixed(1)}ms`,
+  );
 
   const repository = new PrismaMeetingRepository(prisma);
   const meetingService = new MeetingService(repository);
+  const turnProvider = createTurnProvider(config);
   const credentialsService = new IceCredentialsService(
     meetingService,
-    config.turn,
+    turnProvider,
     config.stunUrls,
+    defaultLogger,
+  );
+  const turnProviderName: string =
+    config.turnProviderKind ?? "disabled";
+  defaultLogger.info(
+    `TURN provider: ${turnProviderName}${turnProvider === null ? "" : " (enabled)"}`,
   );
   const app = createApp({
     meetingService,
@@ -106,7 +136,7 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    `Voice Meet backend listening on port ${String(config.port)}\n`,
+    `Voice Meet backend listening on port ${String(config.port)} (bound to 0.0.0.0, FRONTEND_URL=${config.frontendUrls.join(",")})\n`,
   );
 }
 

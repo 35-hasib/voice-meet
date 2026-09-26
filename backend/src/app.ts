@@ -11,7 +11,7 @@ import {
   createApiRateLimiter,
   createMeetingCreationRateLimiter,
 } from "./middleware/rate-limit.js";
-import { createHealthRouter } from "./routes/health.routes.js";
+import { createHealthRouter, healthHandler } from "./routes/health.routes.js";
 import { createMeetingRouter } from "./routes/meeting.routes.js";
 import { createRtcRouter } from "./routes/rtc.routes.js";
 import type { IceCredentialsService } from "./services/ice-credentials.service.js";
@@ -37,7 +37,7 @@ export function createApp(dependencies: AppDependencies): Express {
   const meetingCreationRateLimiter =
     dependencies.meetingCreationRateLimiter ??
     createMeetingCreationRateLimiter();
-  const meetingController = new MeetingController(dependencies.meetingService);
+  const meetingController = new MeetingController(dependencies.meetingService, logger);
   const rtcController = new RtcCredentialsController(
     dependencies.credentialsService,
   );
@@ -65,6 +65,7 @@ export function createApp(dependencies: AppDependencies): Express {
     }),
   );
   app.use(express.json({ limit: "16kb" }));
+  app.get("/api/health", healthHandler);
   app.use("/api", apiRateLimiter);
   app.use("/health", createHealthRouter());
   app.use("/api/meetings", createMeetingRouter(

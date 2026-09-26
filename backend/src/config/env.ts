@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeCloudflareTtlSeconds } from "../services/ice-credentials.service.js";
 
 function emptyToUndefined(value: unknown): unknown {
   if (typeof value !== "string") {
@@ -19,10 +20,16 @@ const environmentSchema = z.object({
   FRONTEND_URL: z.string().trim().min(1),
   PORT: z.string().trim().min(1).default("4000"),
   STUN_SERVER_URL: optionalText,
+  TURN_PROVIDER: optionalText,
   TURN_SERVER_URL: optionalText,
   TURN_SERVER_USERNAME: optionalText,
   TURN_SERVER_CREDENTIAL: optionalText,
+  CLOUDFLARE_TURN_KEY_ID: optionalText,
+  CLOUDFLARE_TURN_API_TOKEN: optionalText,
+  CLOUDFLARE_TURN_TTL_SECONDS: optionalText,
 });
+
+export type TurnProviderKind = "static" | "cloudflare";
 
 export interface AppConfig {
   port: number;
@@ -33,6 +40,12 @@ export interface AppConfig {
     urls: string[];
     usernamePrefix: string;
     sharedSecret: string;
+  } | null;
+  turnProviderKind: TurnProviderKind | null;
+  cloudflareTurn: {
+    keyId: string;
+    apiToken: string;
+    ttlSeconds: number;
   } | null;
 }
 
@@ -121,18 +134,29 @@ function parseFrontendUrls(value: string): string[] {
   return [...new Set(origins)];
 }
 
-function parsePort(value: string): number {
+function parseIntegerInRange(
+  value: string,
+  variableName: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const problem = `${variableName} must be an integer between ${minimum.toString()} and ${maximum.toString()}`;
+
   if (!/^\d+$/.test(value)) {
-    configurationError(["PORT must be an integer between 1 and 65535"]);
+    configurationError([problem]);
   }
 
-  const port = Number(value);
+  const parsed = Number(value);
 
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    configurationError(["PORT must be an integer between 1 and 65535"]);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    configurationError([problem]);
   }
 
-  return port;
+  return parsed;
+}
+
+function parsePort(value: string): number {
+  return parseIntegerInRange(value, "PORT", 1, 65_535);
 }
 
 function toParsableUrl(url: string): URL {
@@ -235,6 +259,18 @@ export function loadConfig(
 
   validateDatabaseUrl(parsed.data.DATABASE_URL);
 
+  const turn = parseTurnConfig(
+    parsed.data.TURN_SERVER_URL,
+    parsed.data.TURN_SERVER_USERNAME,
+    parsed.data.TURN_SERVER_CREDENTIAL,
+  );
+  const cloudflareTurn = parseCloudflareTurnConfig(
+    parsed.data.CLOUDFLARE_TURN_KEY_ID,
+    parsed.data.CLOUDFLARE_TURN_API_TOKEN,
+    parsed.data.CLOUDFLARE_TURN_TTL_SECONDS,
+  );
+  const turnProviderKind = parseTurnProviderKind(parsed.data.TURN_PROVIDER, turn, cloudflareTurn);
+
   return {
     port: parsePort(parsed.data.PORT),
     databaseUrl: parsed.data.DATABASE_URL,
@@ -244,10 +280,78 @@ export function loadConfig(
       "STUN_SERVER_URL",
       ["stun:"],
     ),
-    turn: parseTurnConfig(
-      parsed.data.TURN_SERVER_URL,
-      parsed.data.TURN_SERVER_USERNAME,
-      parsed.data.TURN_SERVER_CREDENTIAL,
+    turn,
+    turnProviderKind,
+    cloudflareTurn,
+  };
+}
+
+function parseCloudflareTurnConfig(
+  keyIdValue: string | undefined,
+  apiTokenValue: string | undefined,
+  ttlValue: string | undefined,
+): AppConfig["cloudflareTurn"] {
+  const configuredValues = [keyIdValue, apiTokenValue].filter(
+    (value) => value !== undefined,
+  );
+
+  if (configuredValues.length === 0) {
+    return null;
+  }
+
+  if (configuredValues.length !== 2) {
+    configurationError([
+      "CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be configured together",
+    ]);
+  }
+
+  return {
+    keyId: keyIdValue ?? "",
+    apiToken: apiTokenValue ?? "",
+    ttlSeconds: normalizeCloudflareTtlSeconds(
+      ttlValue === undefined
+        ? undefined
+        : parseIntegerInRange(ttlValue, "CLOUDFLARE_TURN_TTL_SECONDS", 300, 172_800),
     ),
   };
+}
+
+function parseTurnProviderKind(
+  providerValue: string | undefined,
+  turn: AppConfig["turn"],
+  cloudflareTurn: AppConfig["cloudflareTurn"],
+): TurnProviderKind | null {
+  const normalized = providerValue?.toLowerCase();
+
+  if (normalized === "cloudflare") {
+    if (cloudflareTurn === null) {
+      configurationError([
+        "TURN_PROVIDER=cloudflare requires CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN",
+      ]);
+    }
+
+    if (turn !== null) {
+      configurationError([
+        "TURN_PROVIDER=cloudflare cannot be combined with TURN_SERVER_URL, TURN_SERVER_USERNAME, and TURN_SERVER_CREDENTIAL",
+      ]);
+    }
+
+    return "cloudflare";
+  }
+
+  if (normalized !== undefined && normalized !== "static") {
+    configurationError(['TURN_PROVIDER must be "static" or "cloudflare"']);
+  }
+
+  if (turn === null) {
+    if (cloudflareTurn !== null) {
+      configurationError([
+        "CLOUDFLARE_TURN_KEY_ID requires TURN_PROVIDER=cloudflare",
+      ]);
+    }
+
+    return null;
+  }
+
+  return "static";
 }

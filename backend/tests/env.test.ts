@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config/env.js";
 
 const DATABASE_URL = "postgresql://user:password@localhost:5432/voice_meet";
+const FRONTEND_URL = "http://localhost:3000";
 
 describe("environment configuration", () => {
   it("requires database and frontend URLs", () => {
@@ -45,8 +46,7 @@ describe("environment configuration", () => {
     ]);
   });
 
-  it("names the offending entry and the reason it is invalid", () => {
-    expect(() =>
+  it("names the offending entry and the reason it is invalid", () => {    expect(() =>
       loadConfig({
         DATABASE_URL,
         FRONTEND_URL: "https://app.vercel.app/meet/abc123",
@@ -133,5 +133,98 @@ describe("environment configuration", () => {
         STUN_SERVER_URL: "https://stun.example.com:3478",
       }),
     ).toThrow(/valid ICE URLs/i);
+  });
+  it("selects the Cloudflare TURN provider and defaults its TTL", () => {
+    const config = loadConfig({
+      DATABASE_URL,
+      FRONTEND_URL,
+      TURN_PROVIDER: "cloudflare",
+      CLOUDFLARE_TURN_KEY_ID: "key-123",
+      CLOUDFLARE_TURN_API_TOKEN: "token-abc",
+    });
+
+    expect(config.turnProviderKind).toBe("cloudflare");
+    expect(config.cloudflareTurn).toStrictEqual({
+      keyId: "key-123",
+      apiToken: "token-abc",
+      ttlSeconds: 86_400,
+    });
+    expect(config.turn).toBeNull();
+  });
+
+  it("accepts an explicit Cloudflare TTL", () => {
+    const config = loadConfig({
+      DATABASE_URL,
+      FRONTEND_URL,
+      TURN_PROVIDER: "cloudflare",
+      CLOUDFLARE_TURN_KEY_ID: "key-123",
+      CLOUDFLARE_TURN_API_TOKEN: "token-abc",
+      CLOUDFLARE_TURN_TTL_SECONDS: "3600",
+    });
+
+    expect(config.cloudflareTurn?.ttlSeconds).toBe(3600);
+  });
+
+  it("rejects incomplete or ambiguous TURN provider configuration", () => {
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL,
+        TURN_PROVIDER: "cloudflare",
+        CLOUDFLARE_TURN_KEY_ID: "key-123",
+      }),
+    ).toThrow(/must be configured together/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL,
+        TURN_PROVIDER: "cloudflare",
+      }),
+    ).toThrow(/requires CLOUDFLARE_TURN_KEY_ID/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL,
+        CLOUDFLARE_TURN_KEY_ID: "key-123",
+        CLOUDFLARE_TURN_API_TOKEN: "token-abc",
+      }),
+    ).toThrow(/requires TURN_PROVIDER=cloudflare/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL,
+        TURN_PROVIDER: "cloudflare",
+        CLOUDFLARE_TURN_KEY_ID: "key-123",
+        CLOUDFLARE_TURN_API_TOKEN: "token-abc",
+        TURN_SERVER_URL: "turn:turn.example.com:3478",
+        TURN_SERVER_USERNAME: "voice-meet",
+        TURN_SERVER_CREDENTIAL: "secret",
+      }),
+    ).toThrow(/cannot be combined/);
+
+    expect(() =>
+      loadConfig({
+        DATABASE_URL,
+        FRONTEND_URL,
+        TURN_PROVIDER: "twilio",
+      }),
+    ).toThrow(/must be "static" or "cloudflare"/);
+  });
+
+  it("keeps the static provider as the default for coturn variables", () => {
+    const config = loadConfig({
+      DATABASE_URL,
+      FRONTEND_URL,
+      TURN_SERVER_URL: "turn:turn.example.com:3478",
+      TURN_SERVER_USERNAME: "voice-meet",
+      TURN_SERVER_CREDENTIAL: "secret",
+    });
+
+    expect(config.turnProviderKind).toBe("static");
+    expect(config.turn?.usernamePrefix).toBe("voice-meet");
+    expect(config.cloudflareTurn).toBeNull();
   });
 });

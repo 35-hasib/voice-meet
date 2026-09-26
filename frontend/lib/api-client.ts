@@ -1,7 +1,6 @@
-import { API_BASE_URL, SERVICE_NOT_CONFIGURED_MESSAGE } from "./config";
+import { API_BASE_URL, API_TIMEOUT_MS, SERVICE_NOT_CONFIGURED_MESSAGE } from "./config";
 import type { ApiErrorBody } from "@/types/meeting";
 
-const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ERROR_MESSAGE = "Unable to connect to the server.";
 
 export class ApiClientError extends Error {
@@ -39,7 +38,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
-  }, DEFAULT_TIMEOUT_MS);
+  }, API_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -83,7 +82,11 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     }
 
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ApiClientError("REQUEST_TIMEOUT", "The server took too long to respond.", 0);
+      throw new ApiClientError(
+        "REQUEST_TIMEOUT",
+        "The server took too long to respond. It may be waking up from an idle state — try again.",
+        0,
+      );
     }
 
     throw new ApiClientError("NETWORK_ERROR", DEFAULT_ERROR_MESSAGE, 0);
