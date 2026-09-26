@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MeetingStatus {
+  ACTIVE
+  CLOSED
+}
+
+model Meeting {
+  id           String        @id @default(cuid())
+  meetingCode  String        @unique @db.VarChar(12)
+  status       MeetingStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  closedAt     DateTime?
+  @@map("meetings")
+}
