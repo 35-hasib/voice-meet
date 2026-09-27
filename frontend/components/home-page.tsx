@@ -69,7 +69,7 @@ export function HomePage(): React.JSX.Element {
   };
 
   return (
-    <main className="relative isolate flex min-h-dvh flex-col overflow-hidden px-5 py-6 sm:px-8 sm:py-8">
+    <main className="relative isolate flex min-h-dvh flex-col px-4 py-4 sm:px-8 sm:py-8">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_10%,rgba(34,211,238,0.16),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_32%),radial-gradient(circle_at_50%_100%,rgba(56,189,248,0.1),transparent_42%)]"
@@ -87,14 +87,14 @@ export function HomePage(): React.JSX.Element {
         </span>
       </header>
 
-      <section className="mx-auto flex w-full max-w-6xl flex-1 items-center justify-center py-12 sm:py-20">
-        <div className="grid w-full items-center gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20">
+      <section className="mx-auto flex w-full max-w-6xl flex-1 items-center justify-center py-6 sm:py-12 lg:py-16">
+        <div className="grid w-full items-center gap-8 sm:gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
           <div>
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100">
               <span className="size-1.5 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.9)]" />
               Built for clear conversations
             </div>
-            <h1 className="max-w-2xl text-5xl font-semibold leading-[0.98] tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
+            <h1 className="max-w-2xl text-[2rem] font-semibold leading-[1.02] tracking-[-0.04em] text-white sm:text-5xl sm:leading-[0.98] lg:text-6xl">
               Simple audio rooms with a link that
               <span className="bg-gradient-to-r from-cyan-200 via-sky-300 to-violet-300 bg-clip-text text-transparent">
                 {" "}
@@ -102,20 +102,20 @@ export function HomePage(): React.JSX.Element {
               </span>
               .
             </h1>
-            <p className="mt-6 max-w-xl text-base leading-8 text-slate-300 sm:text-lg">
+            <p className="mt-4 max-w-xl text-sm leading-7 text-slate-300 sm:mt-6 sm:text-base sm:leading-8 lg:text-lg">
               Create a room in one click, share the permanent URL, and talk. No
               sign-in, no downloads, and your microphone audio travels directly
               between browsers.
             </p>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-6 flex flex-col gap-2.5 sm:mt-8 sm:flex-row sm:gap-3">
               <button
                 type="button"
                 onClick={() => {
                   void handleCreate();
                 }}
                 disabled={isCreating}
-                className="inline-flex h-13 items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-6 text-sm font-semibold text-slate-950 shadow-[0_18px_60px_-20px_rgba(34,211,238,0.9)] transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-6 text-sm font-semibold text-slate-950 shadow-[0_18px_60px_-20px_rgba(34,211,238,0.9)] transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {isCreating ? (
                   <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
@@ -124,12 +124,12 @@ export function HomePage(): React.JSX.Element {
                 )}
                 {isCreating ? "Creating room…" : "Create meeting"}
               </button>
-              <span className="inline-flex h-13 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-6 text-sm text-slate-300">
+              <span className="hidden h-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-6 text-sm text-slate-300 sm:inline-flex">
                 Permanent link included
               </span>
             </div>
 
-            <ul className="mt-10 grid gap-3 sm:grid-cols-3">
+            <ul className="mt-7 grid gap-2.5 sm:mt-10 sm:grid-cols-3 sm:gap-3">
               {features.map((feature) => (
                 <li
                   key={feature.label}
@@ -147,22 +147,22 @@ export function HomePage(): React.JSX.Element {
             </ul>
           </div>
 
-          <div className="rounded-[2rem] border border-white/10 bg-slate-900/70 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-7">
+          <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-6">
             {createdMeeting !== null ? (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
                     Meeting created
                   </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
+                  <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-white">
                     Your room is ready
                   </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                  <p className="mt-1.5 text-sm leading-6 text-slate-400">
                     Share this link. It keeps working after everyone leaves.
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
                   <label
                     htmlFor="meeting-link"
                     className="text-xs font-medium text-slate-400"
@@ -176,11 +176,11 @@ export function HomePage(): React.JSX.Element {
                     onFocus={(event) => {
                       event.currentTarget.select();
                     }}
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-3 font-mono text-xs text-cyan-100 outline-none sm:text-sm"
+                    className="mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 font-mono text-xs text-cyan-100 outline-none sm:py-3 sm:text-sm"
                   />
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2.5 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -220,7 +220,7 @@ export function HomePage(): React.JSX.Element {
                 </button>
               </div>
             ) : (
-              <div className="space-y-7">
+              <div className="space-y-5">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
                     Start or resume
@@ -233,7 +233,7 @@ export function HomePage(): React.JSX.Element {
                   </p>
                 </div>
 
-                <form onSubmit={handleJoin} className="space-y-4">
+                <form onSubmit={handleJoin} className="space-y-3">
                   <div>
                     <label
                       htmlFor="meeting-code"
@@ -252,7 +252,7 @@ export function HomePage(): React.JSX.Element {
                       autoCorrect="off"
                       spellCheck={false}
                       placeholder="7kF9xP2mQa12"
-                      className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3.5 font-mono text-base text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-300/10"
+                      className="mt-1.5 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 font-mono text-base text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-300/10"
                     />
                   </div>
                   <button
@@ -266,7 +266,7 @@ export function HomePage(): React.JSX.Element {
 
                 {error !== null ? <AlertBanner>{error}</AlertBanner> : null}
 
-                <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3.5">
                   <p className="text-sm font-medium text-slate-200">
                     How access works
                   </p>
@@ -281,7 +281,7 @@ export function HomePage(): React.JSX.Element {
         </div>
       </section>
 
-      <footer className="mx-auto flex w-full max-w-6xl flex-col gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+      <footer className="mx-auto flex w-full max-w-6xl flex-col gap-1.5 px-1 text-[0.6875rem] text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:text-xs">
         <span>Audio only. No recording. No storage of microphone audio.</span>
         <span>WebRTC mesh · Socket.IO signaling · PostgreSQL meeting registry</span>
       </footer>

@@ -7,11 +7,14 @@ export function RemoteAudio({
   playbackVersion,
   onBlocked,
   onPlaying,
+  muted = false,
 }: {
   stream: MediaStream;
   playbackVersion: number;
   onBlocked: () => void;
   onPlaying: () => void;
+  /** Local playback mute only; the outgoing track and signalling are untouched. */
+  muted?: boolean;
 }): React.JSX.Element {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -31,6 +34,7 @@ export function RemoteAudio({
       ref={audioRef}
       autoPlay
       playsInline
+      muted={muted}
       aria-label="Remote meeting audio"
       className="hidden"
     />

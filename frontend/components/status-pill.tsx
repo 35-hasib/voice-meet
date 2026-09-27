@@ -53,10 +53,27 @@ const statusContent: Record<
 
 export function StatusPill({
   status,
+  compact = false,
 }: {
   status: MeetingConnectionStatus;
+  /**
+   * Dot only, for the fixed-height meeting header. The label still reaches
+   * assistive technology via the accessible name.
+   */
+  compact?: boolean;
 }): React.JSX.Element {
   const content = statusContent[status];
+
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex size-2 shrink-0 rounded-full border ${content.className}`}
+        role="status"
+        aria-label={content.label}
+        title={content.label}
+      />
+    );
+  }
 
   return (
     <span

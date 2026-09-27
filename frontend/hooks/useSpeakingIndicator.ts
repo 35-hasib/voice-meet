@@ -16,6 +16,47 @@ interface SpeakingState {
   isSpeaking: boolean;
 }
 
+/**
+ * One AudioContext shared by every card, reference counted.
+ *
+ * A per-card context looks harmless but browsers cap the number a page may hold
+ * (low single digits on mobile), so past a handful of participants the analysers
+ * would silently stop being created and the speaking glow would disappear
+ * entirely. Sharing also avoids a burst of contexts on join and leave, which is
+ * what drains battery on low-end Android.
+ */
+let sharedContext: AudioContext | null = null;
+let sharedContextUsers = 0;
+
+function acquireAudioContext(): AudioContext | null {
+  if (sharedContext === null) {
+    const audioWindow = window as AudioContextWindow;
+    const AudioContextConstructor =
+      audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
+
+    if (AudioContextConstructor === undefined) {
+      return null;
+    }
+
+    sharedContext = new AudioContextConstructor();
+  }
+
+  sharedContextUsers += 1;
+
+  return sharedContext;
+}
+
+function releaseAudioContext(): void {
+  sharedContextUsers = Math.max(0, sharedContextUsers - 1);
+
+  // Close once the last card lets go, so an empty meeting holds no audio hardware.
+  if (sharedContextUsers === 0 && sharedContext !== null) {
+    const context = sharedContext;
+    sharedContext = null;
+    void context.close().catch(() => undefined);
+  }
+}
+
 export function useSpeakingIndicator(
   stream: MediaStream | null,
   enabled = true,
@@ -31,15 +72,12 @@ export function useSpeakingIndicator(
       return;
     }
 
-    const audioWindow = window as AudioContextWindow;
-    const AudioContextConstructor =
-      audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
+    const context = acquireAudioContext();
 
-    if (AudioContextConstructor === undefined) {
+    if (context === null) {
       return;
     }
 
-    const context = new AudioContextConstructor();
     let interval: number | null = null;
 
     try {
@@ -83,7 +121,7 @@ export function useSpeakingIndicator(
         window.clearInterval(interval);
       }
 
-      void context.close().catch(() => undefined);
+      releaseAudioContext();
     };
   }, [stream, streamKey]);
 

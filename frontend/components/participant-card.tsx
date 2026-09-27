@@ -1,8 +1,9 @@
 "use client";
 
 import { useSpeakingIndicator } from "@/hooks/useSpeakingIndicator";
-import { Mic, MicOff } from "lucide-react";
+import { Mic, MicOff, TriangleAlert, LoaderCircle } from "lucide-react";
 import { getInitials } from "@/lib/validation";
+import type { ParticipantDensity } from "@/lib/participant-layout";
 import type { RtcConnectionState } from "@/types/rtc";
 
 const avatarTones = [
@@ -36,65 +37,149 @@ function connectionLabel(
   }
 }
 
+/**
+ * Avatar sizing per density.
+ *
+ * The card fills whatever grid cell it is given rather than declaring its own
+ * height, so the avatar has to shrink with the cell instead of overflowing it.
+ * Comfortable gets a large stage; dense keeps the initials readable while fitting
+ * four or more cards on a phone.
+ *
+ * The `min()` percentage is the important half: a `dvh` value alone looks right
+ * on a tall stage but overflows a narrow card, because three participants on a
+ * phone leave each card barely wider than the avatar would be. The card clips its
+ * overflow, so without the width term the initials get cut off at the edges.
+ */
+const avatarSize: Record<ParticipantDensity, string> = {
+  comfortable: "size-[min(26dvh,60%)] text-[clamp(1rem,5.5dvh,2.5rem)]",
+  compact: "size-[min(15dvh,55%)] text-[clamp(0.875rem,4dvh,1.5rem)]",
+  dense: "size-[min(11dvh,50%)] text-[clamp(0.75rem,3dvh,1.125rem)]",
+};
+
+const nameSize: Record<ParticipantDensity, string> = {
+  comfortable: "text-base sm:text-lg",
+  compact: "text-sm",
+  dense: "text-[0.6875rem]",
+};
+
+/**
+ * Sizing is derived from the participant count rather than the density alone,
+ * because a phone stage is far taller than it is wide. Letting every card fill
+ * that stage turns two participants into 180x350 slivers, so the grid caps the
+ * shape and centres the leftover space instead of stretching the cards into it.
+ *
+ * `hero`      one participant: large square tile, capped so it stays a tile.
+ * `portrait`  two or three side by side: 3:4 uses the extra height gracefully.
+ * `square`    grids with a second row: 1:1 reads better than a stretched cell.
+ * `fill`      scrollable grids only, where the viewport dictates the row height.
+ */
+const sizeClass = {
+  hero: "mx-auto aspect-square max-h-full w-full max-w-[26rem] self-center",
+  portrait: "aspect-[3/4] max-h-full self-center",
+  square: "aspect-square max-h-full self-center",
+  fill: "h-full",
+} as const;
+
 export function ParticipantCard({
   name,
   muted,
   isSelf,
   stream,
   connectionState,
+  density = "comfortable",
+  size = "fill",
 }: {
   name: string;
   muted: boolean;
   isSelf: boolean;
   stream: MediaStream | null;
   connectionState?: RtcConnectionState;
+  density?: ParticipantDensity;
+  /**
+   * Bounds the card so a stage that is much taller than it is wide cannot turn
+   * every participant into a tall sliver. `fill` is only used once the grid has
+   * to scroll, where the row height is dictated by the viewport instead.
+   */
+  size?: "hero" | "portrait" | "square" | "fill";
 }): React.JSX.Element {
   const isSpeaking = useSpeakingIndicator(stream, !muted && stream !== null);
   const networkLabel = isSelf ? null : connectionLabel(connectionState);
 
   return (
     <article
-      className={`relative flex min-h-64 flex-col items-center justify-center overflow-hidden rounded-[2rem] border p-6 text-center transition duration-300 ${
+      data-testid="participant-card"
+      className={`relative flex min-h-0 w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border p-2 text-center transition-[border-color,background-color,box-shadow] duration-200 sm:gap-1.5 sm:rounded-3xl sm:p-3 ${sizeClass[size]} ${
         isSpeaking
-          ? "border-cyan-300/55 bg-cyan-300/[0.09] shadow-[0_0_44px_-18px_rgba(103,232,249,0.9)]"
+          ? "border-cyan-300/55 bg-cyan-300/[0.09] shadow-[0_0_36px_-16px_rgba(103,232,249,0.85)]"
           : "border-white/10 bg-white/[0.045]"
       }`}
     >
       <div
-        aria-hidden="true"
-        className="absolute -top-20 left-1/2 size-48 -translate-x-1/2 rounded-full bg-cyan-300/10 blur-3xl"
-      />
-      <div
-        className={`relative grid size-28 place-items-center rounded-full bg-gradient-to-br text-3xl font-semibold shadow-2xl transition ${toneFor(name)} ${
-          isSpeaking ? "ring-4 ring-cyan-200/60 ring-offset-4 ring-offset-slate-950" : "ring-1 ring-white/15"
+        data-testid="participant-avatar"
+        className={`relative grid shrink-0 place-items-center rounded-full bg-gradient-to-br font-semibold transition-[box-shadow] duration-200 ${avatarSize[density]} ${toneFor(name)} ${
+          isSpeaking
+            ? "shadow-[0_0_0_3px_rgba(103,232,249,0.28),0_0_0_6px_rgba(103,232,249,0.12)]"
+            : "shadow-[0_0_0_1px_rgba(255,255,255,0.14)]"
         }`}
       >
         {getInitials(name)}
       </div>
-      <div className="relative mt-6 flex w-full min-w-0 flex-col items-center gap-1">
-        <p className="w-full truncate text-lg font-semibold text-white">{name}</p>
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-          {isSelf ? "You" : "Participant"}
+
+      {/*
+       * min-w-0 lets the name truncate instead of widening the card, and
+       * truncate keeps a long name from wrapping and pushing the card taller than
+       * its grid row.
+       */}
+      <div className="relative flex w-full min-w-0 flex-col items-center">
+        <p
+          className={`w-full truncate font-semibold text-white ${nameSize[density]}`}
+          title={name}
+        >
+          {name}
         </p>
+        {density === "comfortable" ? (
+          <p className="mt-0.5 text-[0.6875rem] font-medium uppercase tracking-[0.18em] text-slate-400">
+            {isSelf ? "You" : "Participant"}
+          </p>
+        ) : null}
       </div>
-      <div className="relative mt-5 flex items-center gap-2">
+
+      {/* Icon-only mic state: the card gets too small for text badges. */}
+      <div className="relative flex shrink-0 items-center gap-1.5">
         <span
-          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${
+          className={`grid place-items-center rounded-full border p-1 ${
+            density === "dense" ? "size-5" : "size-6 sm:size-7"
+          } ${
             muted
-              ? "border-rose-300/20 bg-rose-300/10 text-rose-100"
-              : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+              ? "border-rose-300/25 bg-rose-300/10 text-rose-200"
+              : "border-emerald-300/25 bg-emerald-300/10 text-emerald-200"
           }`}
+          title={muted ? "Muted" : "Microphone on"}
         >
           {muted ? (
-            <MicOff aria-hidden="true" className="size-3.5" />
+            <MicOff aria-label="Muted" className="size-3 sm:size-3.5" />
           ) : (
-            <Mic aria-hidden="true" className="size-3.5" />
+            <Mic aria-label="Microphone on" className="size-3 sm:size-3.5" />
           )}
-          {muted ? "Muted" : "Mic on"}
         </span>
         {networkLabel !== null ? (
-          <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs text-amber-100">
-            {networkLabel}
+          <span
+            className={`grid place-items-center rounded-full border border-amber-300/25 bg-amber-300/10 p-1 text-amber-100 ${
+              density === "dense" ? "size-5" : "size-6 sm:size-7"
+            }`}
+            title={networkLabel}
+          >
+            {networkLabel === "Connecting" ? (
+              <LoaderCircle
+                aria-label="Connecting"
+                className="size-3 animate-spin sm:size-3.5"
+              />
+            ) : (
+              <TriangleAlert
+                aria-label={networkLabel}
+                className="size-3 sm:size-3.5"
+              />
+            )}
           </span>
         ) : null}
       </div>

@@ -4,6 +4,8 @@
   color-scheme: dark;
   --background: #020617;
   --foreground: #e2e8f0;
+  /* The shell is capped here so a layout bug can never produce page scroll. */
+  --shell-max-height: 100dvh;
 }
 
 @theme inline {
@@ -32,6 +34,8 @@ button,
 a,
 input {
   -webkit-tap-highlight-color: transparent;
+  /* Removes the 300ms double-tap delay without disabling pinch zoom. */
+  touch-action: manipulation;
 }
 
 ::selection {
@@ -41,6 +45,67 @@ input {
 
 :focus-visible {
   outline-offset: 3px;
+}
+
+/*
+ * Fixed-viewport application shell used by the meeting room and the join screen.
+ *
+ * `100dvh` tracks the dynamic viewport so collapsing mobile browser chrome never
+ * leaves the controls stranded off-screen, and the overflow locks are what make
+ * "one screen, no page scrolling" hold. `min-height: 0` on the flexible middle
+ * child is required: without it a grid child can refuse to shrink and push the
+ * footer past the viewport.
+ */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: var(--shell-max-height);
+  max-height: var(--shell-max-height);
+  overflow: hidden;
+  /* Stops pull-to-refresh and scroll chaining from the shell itself. */
+  overscroll-behavior: none;
+}
+
+.app-shell-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Pads for the notch and the iOS home indicator. No-ops elsewhere. */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Horizontal gutters that respect landscape notches. */
+.safe-gutter {
+  padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+}
+
+/*
+ * Only the participant list itself may scroll, and only when it cannot fit.
+ * `overscroll-contain` keeps that scroll from chaining to the page, and the
+ * scrollbar is hidden so a long list does not shift the grid sideways.
+ */
+.contained-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.contained-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

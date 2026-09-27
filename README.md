@@ -774,12 +774,12 @@ suspends.
 ```text
 frontend: npm run lint        pass
 frontend: npm run typecheck   pass
-frontend: npm test            pass (10 tests)
+frontend: npm test            pass (33 tests)
 frontend: npm run build       pass (Next.js 16.3.6 production build)
 
 backend:  npm run lint        pass
 backend:  npm run typecheck   pass
-backend:  npm test            pass (46 tests across 8 files)
+backend:  npm test            pass (47 tests across 8 files)
 backend:  npm run build       pass
 ```
 
@@ -818,7 +818,7 @@ running backend. All 31 checks passed:
 ### Verified in a real browser with real WebRTC audio
 
 `frontend/scripts/browser-e2e.mjs` drives two headless Chromium pages through
-the actual UI with a fake microphone device. All 16 checks pass:
+the actual UI with a fake microphone device. All 193 checks pass:
 
 - Clicking "Join meeting" replaces the lobby with the room, and the lobby is
   absent from the DOM.
@@ -833,6 +833,15 @@ the actual UI with a fake microphone device. All 16 checks pass:
 - Leaving updates the remaining participant to "1 person here", and the meeting
   still resolves over HTTP afterwards.
 - No uncaught console or page errors.
+
+The same run audits layout across eight widths (320, 360, 375, 390, 412, 430,
+768 and 1024 px, plus deliberately short viewports and a seven-participant room).
+At each one it asserts that the page never scrolls vertically or horizontally,
+that the five controls stay pinned with 44px touch targets, that cards sit
+between the header and the control bar, and that the grid resolves to the
+expected column count. The last of those is deliberate: a responsive utility
+that Tailwind never emitted leaves the class in the DOM while changing nothing,
+so only the computed track count proves a breakpoint actually applied.
 
 Run it yourself:
 
