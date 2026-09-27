@@ -774,7 +774,7 @@ suspends.
 ```text
 frontend: npm run lint        pass
 frontend: npm run typecheck   pass
-frontend: npm test            pass (33 tests)
+frontend: npm test            pass (41 tests)
 frontend: npm run build       pass (Next.js 16.3.6 production build)
 
 backend:  npm run lint        pass
@@ -818,7 +818,7 @@ running backend. All 31 checks passed:
 ### Verified in a real browser with real WebRTC audio
 
 `frontend/scripts/browser-e2e.mjs` drives two headless Chromium pages through
-the actual UI with a fake microphone device. All 193 checks pass:
+the actual UI with a fake microphone device. All 204 checks pass:
 
 - Clicking "Join meeting" replaces the lobby with the room, and the lobby is
   absent from the DOM.
@@ -829,7 +829,13 @@ the actual UI with a fake microphone device. All 193 checks pass:
 - **Real audio energy is measured on both sides** through an `AudioContext` /
   `AnalyserNode` attached to the remote stream (RMS around 0.04–0.28), proving
   audio actually crosses the peer connection rather than just establishing.
-- Muting in one browser is reflected in the other.
+- Muting in one browser is reflected in the other, as a visible "Muted" label and
+  a mic-off badge on the remote card, and unmuting clears both.
+- The end-call control renders red, and the icon-only controls reveal their name
+  in a tooltip on hover and on keyboard focus.
+- The "Unable to establish an audio connection" notice appears when a peer
+  connection fails, disappears once that peer is reachable again, and stays up
+  while any *other* participant is still unreachable.
 - Leaving updates the remaining participant to "1 person here", and the meeting
   still resolves over HTTP afterwards.
 - No uncaught console or page errors.
@@ -853,7 +859,7 @@ npx playwright install chromium
 node scripts/browser-e2e.mjs
 ```
 
-Two bugs were found and fixed by this test:
+Three bugs were found and fixed by this test:
 
 1. The room was rendered as a sibling *after* the lobby's full-height
    `<main>`, so joining pushed the room below the fold and the page looked
@@ -869,6 +875,21 @@ Two bugs were found and fixed by this test:
    teardown during the async ICE lookup cancels cleanly instead of leaving
    `leavingRef` stuck at `true` (which previously made the Leave button a no-op
    and left the participant ghosted in the room).
+3. The "Unable to establish an audio connection" notice was set when a peer
+   connection reached `failed` and never cleared again, because the only place
+   that reset it was a successful join. One transient ICE failure therefore left
+   a permanent warning on screen for the rest of the meeting, even with audio
+   flowing — the same latched banner on the join screen, on disconnect, and for
+   every other error message sharing that state slot. The notice now retires
+   when the peer returns to `connected` and when a failing participant leaves,
+   while leaving unrelated join, microphone, and socket errors untouched.
+
+Reproducing a real `failed` state needs ICE to time out, which the platform will
+not do on request, so the e2e run wraps `RTCPeerConnection` to record each
+instance and dispatch `connectionstatechange` with a chosen state. The wrapper
+returns the genuine peer connection, so offer/answer/ICE and the live-audio
+assertions still run against real WebRTC. Disabling the fix makes exactly the two
+"notice clears" checks fail.
 
 ### Manual test checklist
 

@@ -241,6 +241,49 @@ const auditJoinScreen = (page) =>
     };
   });
 
+/**
+ * Records every RTCPeerConnection the app builds and lets a test drive the
+ * connection state directly.
+ *
+ * A real `failed` state is almost impossible to provoke on demand: it needs ICE
+ * to time out, and the platform will not fail a connection on request. The bug
+ * this guards against is exactly one a real network produces and a mock does
+ * not, so the tests need to be able to fake it. The wrapper returns the genuine
+ * peer connection untouched, so offer/answer/ICE and the live-audio checks all
+ * still run against real WebRTC.
+ */
+async function instrumentPeerConnections(page) {
+  await page.addInitScript(() => {
+    const NativePeerConnection = window.RTCPeerConnection;
+    const peers = [];
+
+    window.RTCPeerConnection = function (...args) {
+      const connection = new NativePeerConnection(...args);
+      peers.push(connection);
+      return connection;
+    };
+    window.RTCPeerConnection.prototype = NativePeerConnection.prototype;
+
+    window.__testPeers = peers;
+    // `connectionState` is a prototype getter, so an own data property shadows
+    // it. The real event is then dispatched so the app's own listener runs.
+    window.__setPeerState = (index, state) => {
+      const connection = peers[index];
+
+      if (connection === undefined) {
+        return false;
+      }
+
+      Object.defineProperty(connection, "connectionState", {
+        value: state,
+        configurable: true,
+      });
+      connection.dispatchEvent(new Event("connectionstatechange"));
+      return true;
+    };
+  });
+}
+
 async function joinAs(browser, meetingCode, name, viewport) {
   const context = await browser.newContext({
     permissions: ["microphone"],
@@ -248,6 +291,8 @@ async function joinAs(browser, meetingCode, name, viewport) {
   });
   const page = await context.newPage();
   const errors = [];
+
+  await instrumentPeerConnections(page);
 
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -383,6 +428,117 @@ try {
     .catch(() => false);
   check("muting in one browser is shown to the other", bobSeesMuted);
 
+  // A working mute that nobody can see is indistinguishable from a broken one, so
+  // assert the remote card is visibly marked, not merely correct in the DOM.
+  const remoteMuteIsVisible = await bob.page
+    .locator('[data-testid="participant-muted-label"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  const remoteMuteBadgeOnAvatar = await bob.page
+    .locator('[data-testid="participant-muted-badge"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  check(
+    "the muted participant's card shows a visible Muted label",
+    remoteMuteIsVisible,
+  );
+  check(
+    "the muted participant's avatar carries a mic-off badge",
+    remoteMuteBadgeOnAvatar,
+  );
+
+  // Unmuting must clear the remote indication too, otherwise it latches on.
+  await alice.page.getByRole("button", { name: "Unmute microphone" }).click();
+  const bobSeesUnmuted = await bob.page
+    .locator('[data-testid="participant-muted-label"]')
+    .first()
+    .waitFor({ state: "detached", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  check("unmuting clears the other browser's Muted label", bobSeesUnmuted);
+
+  // ---------------------------------------------------------------------
+  // Control bar affordances: a red end-call button, and a tooltip that names the
+  // control under the pointer, since the bar is icon-only.
+  // ---------------------------------------------------------------------
+  const leaveIsRed = await alice.page
+    .getByRole("button", { name: "Leave meeting" })
+    .evaluate((button) => {
+      const computed = getComputedStyle(button).backgroundColor;
+      const lab = computed.match(/^lab\(([\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/);
+
+      if (lab !== null) {
+        // Tailwind v4 emits `lab()` for this fill, and this Chromium exposes
+        // neither `CSSStyleValue.to("srgb")` nor an rgb() computed value, so the
+        // channels cannot simply be read out. In lab(), a* is the green<->red
+        // axis and b* the blue<->yellow one: a red fill sits far along +a*,
+        // while amber and the neutral control fill stay near the middle. This
+        // separates a real red from both amber and grey without a colour
+        // library.
+        const a = Number(lab[2]);
+        const b = Number(lab[3]);
+        return a > 40 && a > b;
+      }
+
+      const [r, g, b] = computed.match(/[\d.]+/g).slice(0, 3).map(Number);
+      // Red must clearly dominate the other channels, not merely lean warm.
+      return r > 150 && r - g > 60 && r - b > 60;
+    })
+    .catch(() => false);
+  check("the end-call button is red", leaveIsRed);
+
+  const micButton = alice.page.getByRole("button", { name: "Mute microphone" });
+  const tooltip = alice.page.locator('[data-testid="control-tooltip"]', {
+    hasText: "Mute mic",
+  });
+
+  // Park the pointer away from the control bar and drop focus first. The mute
+  // assertions above click the mic button, which leaves the pointer resting on
+  // it and keeps it focused; the tooltip is revealed by `group-hover` *or*
+  // `group-focus-within`, so measuring "before hover" without resetting both
+  // only measures a hover that is still in effect.
+  await alice.page.mouse.move(2, 2);
+  await alice.page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+  await alice.page.waitForTimeout(250);
+  const hiddenBeforeHover = await tooltip
+    .first()
+    .evaluate((element) => getComputedStyle(element).opacity)
+    .catch(() => null);
+  await micButton.hover();
+  // Playwright treats an opacity:0 element as visible, so the opacity itself has
+  // to be asserted rather than relying on a visibility check.
+  await alice.page.waitForTimeout(250);
+  const shownAfterHover = await tooltip
+    .first()
+    .evaluate((element) => getComputedStyle(element).opacity)
+    .catch(() => null);
+
+  check(
+    "control tooltips are hidden until the pointer arrives",
+    hiddenBeforeHover === "0",
+    `opacity=${hiddenBeforeHover}`,
+  );
+  check(
+    "hovering a control reveals its name",
+    shownAfterHover === "1",
+    `opacity=${shownAfterHover}`,
+  );
+
+  const tooltipStaysOnScreen = await tooltip
+    .first()
+    .evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return box.left >= 0 && box.right <= window.innerWidth;
+    })
+    .catch(() => false);
+  check("the revealed tooltip stays inside the viewport", tooltipStaysOnScreen);
+
   // ---------------------------------------------------------------------
   // Responsive audit. A long-named third participant forces the grid into its
   // two-row configuration, so both the comfortable and compact card layouts get
@@ -405,6 +561,82 @@ try {
     .getByTestId("participant-count")
     .filter({ hasText: "3 people here" })
     .waitFor({ state: "attached", timeout: 20000 });
+
+  // ---------------------------------------------------------------------
+  // Connection-failure notice lifecycle.
+  //
+  // Regression cover for a reported bug: a single failed peer connection
+  // latched "Unable to establish an audio connection…" on screen for the rest
+  // of the meeting, even after audio was flowing again. The notice has to
+  // follow reality in both directions.
+  // ---------------------------------------------------------------------
+  const CONNECTION_NOTICE = "Unable to establish an audio connection";
+  // Scoped to the notice strip on purpose. `getByRole("alert")` also matches
+  // Next.js's own visually hidden `__next-route-announcer__`, which is
+  // permanently in the document, so an unscoped selector would report a notice
+  // that is not there and wait forever for one that is.
+  const aliceNotice = alice.page
+    .getByTestId("meeting-notice")
+    .filter({ hasText: CONNECTION_NOTICE });
+  const setPeerState = (index, state) =>
+    alice.page.evaluate(
+      ([i, s]) => window.__setPeerState(i, s),
+      [index, state],
+    );
+  const alertShowsConnectionNotice = async () => {
+    const notice = aliceNotice.first();
+
+    if ((await notice.count()) === 0) {
+      return false;
+    }
+
+    return (await notice.getAttribute("data-tone")) === "error";
+  };
+
+  const peerCount = await alice.page.evaluate(() => window.__testPeers.length);
+  check(
+    "a failed peer connection raises the connection notice",
+    (await setPeerState(0, "failed")) === true &&
+      (await aliceNotice.first()
+        .waitFor({ state: "visible", timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)) &&
+      (await alertShowsConnectionNotice()),
+    `peers=${peerCount}`,
+  );
+
+  await setPeerState(0, "connected");
+  const clearedOnRecovery = await aliceNotice
+    .first()
+    .waitFor({ state: "detached", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    "the connection notice clears once the peer connects again",
+    clearedOnRecovery,
+  );
+
+  // Two participants unreachable at once: recovering one must not hide the
+  // other, who is still genuinely unreachable.
+  await setPeerState(0, "failed");
+  await setPeerState(1, "failed");
+  await setPeerState(0, "connected");
+  await alice.page.waitForTimeout(300);
+  check(
+    "the notice stays while another participant is still unreachable",
+    await alertShowsConnectionNotice(),
+  );
+
+  await setPeerState(1, "connected");
+  const clearedWhenAllRecovered = await aliceNotice
+    .first()
+    .waitFor({ state: "detached", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    "the notice clears once every peer is reachable again",
+    clearedWhenAllRecovered,
+  );
 
   for (const viewport of VIEWPORTS) {
     await alice.page.setViewportSize({

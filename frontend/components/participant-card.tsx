@@ -116,13 +116,29 @@ export function ParticipantCard({
     >
       <div
         data-testid="participant-avatar"
-        className={`relative grid shrink-0 place-items-center rounded-full bg-gradient-to-br font-semibold transition-[box-shadow] duration-200 ${avatarSize[density]} ${toneFor(name)} ${
+        className={`relative grid shrink-0 place-items-center rounded-full bg-gradient-to-br font-semibold transition-[box-shadow,opacity,filter] duration-200 ${avatarSize[density]} ${toneFor(name)} ${
           isSpeaking
             ? "shadow-[0_0_0_3px_rgba(103,232,249,0.28),0_0_0_6px_rgba(103,232,249,0.12)]"
             : "shadow-[0_0_0_1px_rgba(255,255,255,0.14)]"
-        }`}
+        } ${muted ? "opacity-55 saturate-50" : ""}`}
       >
         {getInitials(name)}
+
+        {/*
+         * Mute needs to be readable at a glance on someone else's card, so it is
+         * repeated on the avatar itself. A small badge under the name is easy to
+         * miss, which made a working mute look like it had not been applied. This
+         * copy is decorative: the labelled badge below carries the accessible name.
+         */}
+        {muted ? (
+          <span
+            aria-hidden="true"
+            data-testid="participant-muted-badge"
+            className="absolute -bottom-0.5 -right-0.5 grid size-[1.375rem] place-items-center rounded-full border-2 border-slate-950 bg-rose-500 text-white sm:size-6"
+          >
+            <MicOff className="size-2.5 sm:size-3" />
+          </span>
+        ) : null}
       </div>
 
       {/*
@@ -162,6 +178,18 @@ export function ParticipantCard({
             <Mic aria-label="Microphone on" className="size-3 sm:size-3.5" />
           )}
         </span>
+        {/*
+         * The word, not just the icon. There is room for it at every density except
+         * the crowded one, where the avatar badge carries the message instead.
+         */}
+        {muted && density !== "dense" ? (
+          <span
+            data-testid="participant-muted-label"
+            className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-rose-200"
+          >
+            Muted
+          </span>
+        ) : null}
         {networkLabel !== null ? (
           <span
             className={`grid place-items-center rounded-full border border-amber-300/25 bg-amber-300/10 p-1 text-amber-100 ${

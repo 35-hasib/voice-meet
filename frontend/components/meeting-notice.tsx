@@ -32,6 +32,8 @@ export function MeetingNotice({
     <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-3 pt-2">
       <div
         role={tone === "error" ? "alert" : "status"}
+        data-testid="meeting-notice"
+        data-tone={tone}
         className={`pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg shadow-black/30 backdrop-blur-md ${toneClasses[tone]}`}
       >
         <Icon aria-hidden="true" className="size-4 shrink-0" />

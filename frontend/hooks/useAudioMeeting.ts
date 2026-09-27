@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { SERVICE_NOT_CONFIGURED_MESSAGE, SOCKET_URL } from "@/lib/config";
+import {
+  CONNECTION_NOTICE_MESSAGE,
+  isFailedConnection,
+  isRecoveredConnection,
+  shouldRetireConnectionNotice,
+} from "@/lib/connection-notice";
 import { resolveIceConfiguration, type ResolvedIceConfiguration } from "@/lib/ice-servers";
 import type { Participant } from "@/types/meeting";
 import type { RtcConnectionState } from "@/types/rtc";
@@ -18,8 +24,6 @@ import type {
 } from "@/types/realtime";
 
 const JOIN_TIMEOUT_MS = 12_000;
-const CONNECTION_ERROR_MESSAGE =
-  "Unable to establish an audio connection. Please check your network and try again.";
 const NO_LIVE_MICROPHONE_MESSAGE =
   "Your microphone stream is no longer available. Leave the meeting and rejoin to reconnect your audio.";
 
@@ -195,6 +199,29 @@ export function useAudioMeeting(options: {
     [],
   );
 
+  /**
+   * Retire the "unable to establish an audio connection" notice once it is no
+   * longer true.
+   *
+   * A failed ICE transport is often recoverable: the agent can pick a new
+   * candidate pair and the peer connection can reach `connected` again, and a
+   * participant that could not be reached may simply have left. Without this,
+   * one transient failure latches the notice for the rest of the meeting even
+   * though audio is flowing, which reports a fixed problem as a live one.
+   *
+   * Only the connection notice is cleared, and only while no peer is still
+   * failed, so a join, microphone, or socket error is never swallowed.
+   */
+  const clearStaleConnectionError = useCallback((): void => {
+    const peerStates = [...peersRef.current.values()].map((peer) =>
+      connectionStateFor(peer.connection),
+    );
+
+    setError((current) =>
+      shouldRetireConnectionNotice(current, peerStates) ? null : current,
+    );
+  }, []);
+
   const createPeer = useCallback(
     (participantId: string): PeerRecord => {
       const existing = peersRef.current.get(participantId);
@@ -257,9 +284,15 @@ export function useAudioMeeting(options: {
       connection.addEventListener("connectionstatechange", () => {
         syncRemotePeer(participantId, record);
         refreshStatus();
+        const state = connection.connectionState;
 
-        if (connection.connectionState === "failed") {
-          setError(CONNECTION_ERROR_MESSAGE);
+        if (isFailedConnection(state)) {
+          setError(CONNECTION_NOTICE_MESSAGE);
+          return;
+        }
+
+        if (isRecoveredConnection(state)) {
+          clearStaleConnectionError();
         }
       });
 
@@ -268,7 +301,7 @@ export function useAudioMeeting(options: {
       refreshStatus();
       return record;
     },
-    [refreshStatus, syncRemotePeer],
+    [clearStaleConnectionError, refreshStatus, syncRemotePeer],
   );
 
   const closePeer = useCallback(
@@ -284,8 +317,11 @@ export function useAudioMeeting(options: {
         current.filter((peer) => peer.participantId !== participantId),
       );
       refreshStatus();
+      // The participant we could not reach may have simply left; stop warning
+      // about a connection failure once there is nothing left to fail.
+      clearStaleConnectionError();
     },
-    [refreshStatus],
+    [clearStaleConnectionError, refreshStatus],
   );
 
   const closeAllPeers = useCallback((): void => {
@@ -305,7 +341,7 @@ export function useAudioMeeting(options: {
         try {
           await record.connection.addIceCandidate(candidate);
         } catch {
-          setError(CONNECTION_ERROR_MESSAGE);
+          setError(CONNECTION_NOTICE_MESSAGE);
         }
       }
     },
@@ -329,7 +365,7 @@ export function useAudioMeeting(options: {
           sdp: offer.sdp ?? "",
         });
       } catch {
-        setError(CONNECTION_ERROR_MESSAGE);
+        setError(CONNECTION_NOTICE_MESSAGE);
       }
     },
     [createPeer],
@@ -357,7 +393,7 @@ export function useAudioMeeting(options: {
           sdp: answer.sdp ?? "",
         });
       } catch {
-        setError(CONNECTION_ERROR_MESSAGE);
+        setError(CONNECTION_NOTICE_MESSAGE);
       }
     },
     [createPeer, flushPendingCandidates],
@@ -379,7 +415,7 @@ export function useAudioMeeting(options: {
         await flushPendingCandidates(record);
         refreshStatus();
       } catch {
-        setError(CONNECTION_ERROR_MESSAGE);
+        setError(CONNECTION_NOTICE_MESSAGE);
       }
     },
     [flushPendingCandidates, refreshStatus],
@@ -403,7 +439,7 @@ export function useAudioMeeting(options: {
       try {
         await record.connection.addIceCandidate(candidate);
       } catch {
-        setError(CONNECTION_ERROR_MESSAGE);
+        setError(CONNECTION_NOTICE_MESSAGE);
       }
     },
     [createPeer],
