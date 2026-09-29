@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createServer } from "node:http";
+import { createServer, type Server as HttpServer } from "node:http";
 import { PrismaClient } from "@prisma/client";
 import { createApp } from "./app.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
@@ -34,6 +34,33 @@ async function closeSocketServer(
   await io.close();
 }
 
+/**
+ * Stop accepting connections and wait for in-flight requests to finish.
+ *
+ * `io.close()` already closes the listener it was attached to, so this is a
+ * safety net for the path where the socket close fails partway and leaves the
+ * server listening. The `listening` guard matters: closing an already-closed
+ * server reports `ERR_SERVER_NOT_RUNNING`, which would otherwise turn a clean
+ * shutdown into a reported failure.
+ */
+function closeHttpServer(httpServer: HttpServer): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (!httpServer.listening) {
+      resolve();
+      return;
+    }
+
+    httpServer.close((error) => {
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const prisma = new PrismaClient();
@@ -63,6 +90,7 @@ async function main(): Promise<void> {
     meetingService,
     credentialsService,
     frontendUrls: config.frontendUrls,
+    trustProxy: config.trustProxy,
     logger: defaultLogger,
   });
   const httpServer = createServer(app);
@@ -80,6 +108,10 @@ async function main(): Promise<void> {
 
     shuttingDown = true;
     defaultLogger.error(`Received ${signal}; shutting down`);
+
+    // A hard deadline is armed first so a resource that refuses to close cannot
+    // leave the process alive indefinitely, and it is disarmed only once every
+    // close below has been attempted.
     const forceExit = setTimeout(() => {
       defaultLogger.error("Graceful shutdown timed out");
       process.exit(1);
@@ -95,6 +127,16 @@ async function main(): Promise<void> {
       defaultLogger.error("Socket server shutdown failed", error);
     }
 
+    // `io.close()` closes the listener it was attached to, but only on the path
+    // where it succeeds. Closing it again here is a no-op in the normal case and
+    // covers the path where the socket close failed partway.
+    try {
+      await closeHttpServer(httpServer);
+    } catch (error: unknown) {
+      shutdownFailed = true;
+      defaultLogger.error("HTTP server shutdown failed", error);
+    }
+
     try {
       await prisma.$disconnect();
     } catch (error: unknown) {
@@ -104,8 +146,13 @@ async function main(): Promise<void> {
 
     clearTimeout(forceExit);
 
+    // Failure has to force the exit: the host is waiting on this process to go
+    // away, and a resource that refused to close would otherwise keep the event
+    // loop alive forever with only a non-zero exit code set. On success every
+    // resource is closed, so the loop drains and the process ends on its own.
     if (shutdownFailed) {
-      process.exitCode = 1;
+      defaultLogger.error("Shutdown complete with errors");
+      process.exit(1);
       return;
     }
 

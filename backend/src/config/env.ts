@@ -19,6 +19,7 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().trim().min(1),
   FRONTEND_URL: z.string().trim().min(1),
   PORT: z.string().trim().min(1).default("4000"),
+  TRUST_PROXY: optionalText,
   STUN_SERVER_URL: optionalText,
   TURN_PROVIDER: optionalText,
   TURN_SERVER_URL: optionalText,
@@ -33,6 +34,7 @@ export type TurnProviderKind = "static" | "cloudflare";
 
 export interface AppConfig {
   port: number;
+  trustProxy: boolean | number;
   databaseUrl: string;
   frontendUrls: string[];
   stunUrls: string[];
@@ -159,6 +161,34 @@ function parsePort(value: string): number {
   return parseIntegerInRange(value, "PORT", 1, 65_535);
 }
 
+function parseTrustProxy(value: string | undefined): boolean | number {
+  if (value === undefined) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "true" || normalized === "1") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0") {
+    return false;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    const parsed = Number(normalized);
+
+    if (Number.isSafeInteger(parsed) && parsed > 1) {
+      return parsed;
+    }
+  }
+
+  configurationError([
+    'TRUST_PROXY must be "true", "false", or the number of trusted proxy hops',
+  ]);
+}
+
 function toParsableUrl(url: string): URL {
   const schemeSeparator = url.indexOf(":");
 
@@ -273,6 +303,7 @@ export function loadConfig(
 
   return {
     port: parsePort(parsed.data.PORT),
+    trustProxy: parseTrustProxy(parsed.data.TRUST_PROXY),
     databaseUrl: parsed.data.DATABASE_URL,
     frontendUrls: parseFrontendUrls(parsed.data.FRONTEND_URL),
     stunUrls: parseIceUrls(

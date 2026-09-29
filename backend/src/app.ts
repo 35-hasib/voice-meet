@@ -23,6 +23,12 @@ export interface AppDependencies {
   meetingService: MeetingService;
   credentialsService: IceCredentialsService;
   frontendUrls: string[];
+  /**
+   * Express "trust proxy" hop count/boolean. Behind a reverse proxy this must be
+   * set or every request is seen as coming from the proxy's IP and the rate
+   * limiters below bucket all users together instead of per client.
+   */
+  trustProxy?: boolean | number;
   logger?: AppLogger;
   apiRateLimiter?: RateLimitRequestHandler;
   meetingCreationRateLimiter?: RateLimitRequestHandler;
@@ -31,6 +37,7 @@ export interface AppDependencies {
 export function createApp(dependencies: AppDependencies): Express {
   const app = express();
   const allowedOrigins = new Set(dependencies.frontendUrls);
+  app.set("trust proxy", dependencies.trustProxy ?? false);
   const logger = dependencies.logger ?? defaultLogger;
   const apiRateLimiter =
     dependencies.apiRateLimiter ?? createApiRateLimiter();

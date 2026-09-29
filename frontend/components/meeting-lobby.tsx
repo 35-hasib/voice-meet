@@ -1,12 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertBanner } from "@/components/alert-banner";
 import { BrandMark } from "@/components/brand-mark";
 import { MeetingRoom } from "@/components/meeting-room";
 import { useMeetingLookup } from "@/hooks/useMeetingLookup";
+import { useMeetingJoin } from "@/hooks/useMeetingJoin";
 import { useMicrophone } from "@/hooks/useMicrophone";
+import {
+  getStoredDisplayNameServerSnapshot,
+  readStoredDisplayName,
+  subscribeToStoredDisplayName,
+} from "@/lib/display-name-storage";
+import {
+  queryMicrophonePermission,
+  type MicrophonePermissionState,
+} from "@/lib/microphone-permission";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -80,11 +90,25 @@ export function MeetingLobby({
   const lookup = useMeetingLookup(normalizedCode);
   const microphone = useMicrophone();
   const previewRef = useRef<HTMLAudioElement | null>(null);
-  const [displayName, setDisplayName] = useState("");
-  const [roomStream, setRoomStream] = useState<MediaStream | null>(null);
-  const [roomName, setRoomName] = useState("");
-  const [isJoining, setIsJoining] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const { roomStream, roomName, isJoining, formError, join, clearError, leaveRoom } =
+    useMeetingJoin(microphone);
+
+  // A remembered name is read through the store rather than into state so the
+  // server-rendered empty input stays valid HTML and the stored name simply
+  // appears once the client takes over. `null` means "the user has not touched
+  // the field", which is what keeps the remembered name as the default instead
+  // of snapping back to it after the user clears their own typing.
+  const storedName = useSyncExternalStore(
+    subscribeToStoredDisplayName,
+    readStoredDisplayName,
+    getStoredDisplayNameServerSnapshot,
+  );
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const displayName = nameDraft ?? storedName;
+
+  const [microphonePermission, setMicrophonePermission] =
+    useState<MicrophonePermissionState | null>(null);
+  const autoJoinRef = useRef(false);
 
   useEffect(() => {
     const audio = previewRef.current;
@@ -97,10 +121,62 @@ export function MeetingLobby({
     void audio.play().catch(() => undefined);
   }, [microphone.stream]);
 
+  useEffect(() => {
+    let active = true;
+
+    void queryMicrophonePermission().then((permission) => {
+      if (active) {
+        setMicrophonePermission(permission);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Joins straight in when there is a name to reuse and the browser will hand
+  // over the microphone without prompting. The guard makes this a one-shot per
+  // visit, so leaving the room returns the user to the lobby rather than
+  // pulling them straight back in.
+  useEffect(() => {
+    if (autoJoinRef.current) {
+      return;
+    }
+
+    if (
+      lookup.status !== "ready" ||
+      normalizedCode === null ||
+      roomStream !== null ||
+      microphonePermission !== "granted"
+    ) {
+      return;
+    }
+
+    const name = normalizeDisplayName(storedName);
+
+    if (name.length === 0) {
+      return;
+    }
+
+    autoJoinRef.current = true;
+    void join(name);
+  }, [
+    join,
+    lookup.status,
+    microphonePermission,
+    normalizedCode,
+    roomStream,
+    storedName,
+  ]);
+
+  // Dropping the draft on the way out hands the field back to the remembered
+  // name, which is the normalized value that was actually accepted when
+  // joining, instead of the raw text that was typed.
   const handleLeftRoom = (): void => {
-    setRoomStream(null);
-    setRoomName("");
-    microphone.stop();
+    setNameDraft(null);
+    clearError();
+    leaveRoom();
   };
 
   if (normalizedCode === null) {
@@ -165,34 +241,6 @@ export function MeetingLobby({
     );
   }
 
-  const handleJoin = async (): Promise<void> => {
-    const name = normalizeDisplayName(displayName);
-
-    if (name.length === 0) {
-      setFormError("Enter your display name before joining.");
-      return;
-    }
-
-    setIsJoining(true);
-    setFormError(null);
-
-    let stream = microphone.stream;
-
-    if (stream === null) {
-      stream = await microphone.start();
-    }
-
-    if (stream === null) {
-      setIsJoining(false);
-      return;
-    }
-
-    setDisplayName(name);
-    setRoomName(name);
-    setRoomStream(stream);
-    setIsJoining(false);
-  };
-
   return (
     <div className="app-shell relative bg-slate-950" data-testid="join-shell">
       <div
@@ -247,11 +295,11 @@ export function MeetingLobby({
                 id="display-name"
                 value={displayName}
                 onChange={(event) => {
-                  setDisplayName(event.target.value);
-                  setFormError(null);
+                  setNameDraft(event.target.value);
+                  clearError();
                 }}
                 onBlur={() => {
-                  setDisplayName(normalizeDisplayName(displayName));
+                  setNameDraft(normalizeDisplayName(displayName));
                 }}
                 maxLength={MAX_DISPLAY_NAME_CHARACTERS * 2}
                 autoComplete="name"
@@ -345,7 +393,7 @@ export function MeetingLobby({
             <button
               type="button"
               onClick={() => {
-                void handleJoin();
+                void join(displayName);
               }}
               disabled={isJoining || microphone.status === "requesting"}
               className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 text-sm font-semibold text-slate-950 shadow-[0_18px_60px_-20px_rgba(34,211,238,0.9)] transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"

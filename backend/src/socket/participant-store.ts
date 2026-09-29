@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { MeetingRoomFullError } from "../types/errors.js";
 import type { Participant } from "./types.js";
 
 export interface ParticipantMembership extends Participant {
@@ -9,6 +10,23 @@ export interface ParticipantMembership extends Participant {
 interface ParticipantRoom {
   participants: Map<string, ParticipantMembership>;
 }
+
+/**
+ * Hard ceiling on connected participants in a single meeting.
+ *
+ * Audio is meshed, so every additional participant costs each existing
+ * participant one more peer connection and the whole room O(n^2) signalling
+ * exchanges. Uncapped, one scripted client opening sockets on a busy code makes
+ * every real participant open an unbounded number of RTCPeerConnections until
+ * their browsers give up. A ceiling keeps that blast radius bounded and turns
+ * the overflow into a clear "this meeting is full" instead of a silently
+ * collapsed call.
+ *
+ * 12 is deliberately above what a browser will connect reliably anyway (a mesh
+ * is already struggling well before this), so the limit is reached only by
+ * rooms that were already degrading, never as a surprise for a healthy call.
+ */
+export const MAX_PARTICIPANTS_PER_MEETING = 12;
 
 export type ParticipantIdGenerator = () => string;
 
@@ -41,6 +59,12 @@ export class ParticipantStore {
     if (room === undefined) {
       room = { participants: new Map() };
       this.rooms.set(meetingCode, room);
+    }
+
+    // A freshly created room is empty, so this only ever rejects an existing full
+    // room, and never leaves an orphaned room entry behind.
+    if (room.participants.size >= MAX_PARTICIPANTS_PER_MEETING) {
+      throw new MeetingRoomFullError();
     }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {

@@ -38,6 +38,7 @@ User A ──WebRTC──▶ User B
 - Create a meeting and receive a permanent link such as `https://app.vercel.app/meet/7kF9xP2mQa12`.
 - Join with a link only. No login, email, password, or account creation.
 - Display name is trimmed, control characters are removed, and length is limited to 40 grapheme characters.
+- The display name is remembered per browser in `localStorage`. Opening a later meeting link either joins straight in, or shows the name already filled in.
 - Microphone permission is requested from an explicit user action and previewed before joining.
 - Real WebRTC audio with a mesh topology.
 - Working mute/unmute that toggles the local `MediaStreamTrack.enabled` flag and notifies other participants.
@@ -246,6 +247,7 @@ A unique-constraint conflict is retried up to five times.
 | --- | --- | --- |
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `PORT` | no | Defaults to `4000` |
+| `TRUST_PROXY` | no | Express `trust proxy` setting — `true`, `false`, or the number of proxy hops. **Required when deployed behind a reverse proxy** (Render/Railway/Fly.io) or every request appears to come from the proxy IP and rate limits become global rather than per client. Defaults to `false`, which is correct for direct exposure only |
 | `FRONTEND_URL` | yes | Comma-separated, exact allowed origins, e.g. `http://localhost:3000,https://app.vercel.app` |
 | `STUN_SERVER_URL` | no | Comma-separated STUN URLs returned by the credentials endpoint |
 | `TURN_PROVIDER` | no | `static` for self-hosted coturn, `cloudflare` for Cloudflare Realtime TURN. Omit for STUN only |
@@ -409,7 +411,7 @@ containing control characters are rejected):
 
 | Event | Payload | Notes |
 | --- | --- | --- |
-| `meeting:join` | `{ meetingCode, displayName }` + optional ack | Checks PostgreSQL for an `ACTIVE` meeting first. The server joins the socket to room `meeting:<code>` in memory and emits `meeting:joined`. |
+| `meeting:join` | `{ meetingCode, displayName }` + optional ack | Checks PostgreSQL for an `ACTIVE` meeting first, then enforces the room capacity. The server joins the socket to room `meeting:<code>` in memory and emits `meeting:joined`. |
 | `meeting:leave` | none | Removes the participant from memory only. |
 | `webrtc:offer` | `{ targetParticipantId, sdp }` | Relayed only if sender and target are in the same room. |
 | `webrtc:answer` | `{ targetParticipantId, sdp }` | Same room validation. |
@@ -425,6 +427,14 @@ containing control characters are rejected):
 ```json
 { "ok": false, "error": { "code": "MEETING_CLOSED", "message": "Meeting is closed" } }
 ```
+
+```json
+{ "ok": false, "error": { "code": "MEETING_FULL", "message": "This meeting is full" } }
+```
+
+A rejected `meeting:join` leaves no state behind: the socket is dropped from
+`meeting:<code>` again and no membership is recorded, so a client can retry
+immediately and picks up a freed seat as soon as one opens up.
 
 ### Server → client
 
@@ -447,6 +457,11 @@ knows which peer connection the message belongs to.
 - SDP is limited to 48 KB, ICE candidates to 8 KB, display names to 40 characters.
 - Every signaling payload is validated with Zod and rejected silently when invalid.
 - Per-socket limits: 5 join attempts per 60 seconds, 120 signaling events per 10 seconds.
+- A meeting holds at most 12 connected participants. Audio is meshed, so each
+  participant costs every other participant one more peer connection; the cap
+  keeps that O(n²) cost bounded and turns the overflow into `MEETING_FULL`
+  rather than a call that silently collapses once browsers run out of
+  connection capacity.
 - Participants are stored in a `Map` in the backend process. There is no database write on join, leave, mute, or disconnect.
 
 ## 12. WebRTC design
@@ -488,7 +503,48 @@ join screen appears.
 Restarting the backend does not affect the meeting because the meeting lives in
 PostgreSQL, not in the signaling process.
 
-## 14. STUN and TURN
+## 14. Remembering the display name
+
+The name is remembered per browser in `localStorage` under
+`voice-meet:display-name`, so it is only ever entered once per browser.
+
+The value written is the name that was actually accepted when joining, already
+normalized, and it is normalized again on read. A stored value is therefore
+always something the server would accept, which also means a hand-edited or
+stale entry cannot be used to smuggle an invalid name past the client.
+
+Opening a meeting link takes one of two paths:
+
+| Situation | Behavior |
+| --- | --- |
+| A name is stored **and** the browser reports microphone permission as already granted | Joins the meeting immediately. No form, no typing, no permission prompt |
+| A name is stored but permission is not yet granted | The name is prefilled and the user presses "Join meeting", which is the click that gives the browser the user gesture it needs to show the permission prompt |
+| No name is stored | The empty form, as before |
+
+Auto-join is deliberately gated on permission already being granted. Asking for
+the microphone on page load instead is unreliable in ways that are hard to see:
+Safari refuses a `getUserMedia` call that has no user gesture behind it, and
+once a permission prompt is dismissed the browser does not prompt again, so the
+attempt would fail silently on every later visit. Both cases fall back to the
+prefilled button, which is where the click already made that flow reliable.
+
+Every unknown permission state is treated as "not granted" and falls back to the
+button. A browser with no `navigator.permissions` support therefore never
+auto-joins, which is the safe direction to fail in.
+
+Two details worth knowing if this is changed later:
+
+- The remembered name is read with `useSyncExternalStore` and a server snapshot
+  of `""`, not into `useState` or a lazy initializer. The lobby is still server
+  rendered, so reading storage during render or in a state initializer would
+  hydrate a different value than the server emitted. The snapshot makes the
+  first paint the empty name and lets the stored one arrive on the client's
+  first render, with no hydration mismatch.
+- The name input holds `null` until the user types, falling back to the stored
+  value. That is what stops the field from snapping the remembered name back
+  after the user deliberately clears it.
+
+## 15. STUN and TURN
 
 STUN and TURN are both configurable; no provider is hard-coded.
 
@@ -621,7 +677,7 @@ Each entry that carries a `username` and `credential` is a TURN server. The
 expiry is embedded in the username and rotates on every call, so a value that
 never changes means the server variables were not picked up.
 
-## 15. Security model
+## 16. Security model
 
 - The meeting link is the access mechanism. Anyone who possesses it can attempt
   to join; there is no account system. Treat links as secrets and do not publish
@@ -658,7 +714,7 @@ never changes means the server variables were not picked up.
   against that version. Remove the override only when a Prisma release resolves
   the advisory upstream.
 
-## 16. Deployment
+## 17. Deployment
 
 ### Frontend → Vercel
 
@@ -767,7 +823,7 @@ above the worst-case cold start. The durable fix is a paid Render instance, whic
 does not suspend; a free instance also drops live WebSocket calls when it
 suspends.
 
-## 17. Testing
+## 18. Testing
 
 ### Automated checks that were run
 
@@ -918,7 +974,7 @@ passing.
 TURN should be verified separately from a network that blocks direct peer
 connections (for example a symmetric NAT or restrictive corporate Wi-Fi).
 
-## 18. Known limitations
+## 19. Known limitations
 
 - Mesh WebRTC does not scale to large meetings; use an SFU for that.
 - No authentication, so the link is the only access control.
@@ -931,7 +987,7 @@ connections (for example a symmetric NAT or restrictive corporate Wi-Fi).
 - Speaking indicators are best-effort visual feedback based on local audio
   analysis.
 
-## 19. Future roadmap
+## 20. Future roadmap
 
 - **Phase 2:** Video and camera on/off
 - **Phase 3:** Screen sharing
@@ -942,14 +998,20 @@ connections (for example a symmetric NAT or restrictive corporate Wi-Fi).
 - **Phase 8:** Authentication, user accounts, meeting history
 - **Phase 9:** Recording
 
-## 20. Verification status
+## 21. Verification status
 
 - Automated lint, typecheck, unit/API tests, and production builds pass for both
   applications.
 - Prisma migrations were applied to a real PostgreSQL 18 database, and the
-  end-to-end smoke test described in section 17 passes all 31 checks, including
-  live REST calls, live Socket.IO signaling between two clients, and proof that
-  the meeting row survives every participant leaving.
+  end-to-end smoke test described in section 18 passes all 204 checks, including
+  live REST calls, live Socket.IO signaling between seven clients, responsive
+  layout checks, and proof that the meeting row survives every participant
+  leaving.
+- The remembered display name was verified in a real browser: a first visit
+  stores the name, a later visit to a different meeting link joins with no
+  typing, leaving the room returns to the lobby instead of re-joining, a browser
+  without microphone permission falls back to the prefilled form, and the dev
+  build logs no hydration warnings.
 - WebRTC was verified in a real browser: two Chromium pages exchange **audible
   audio** over a mesh peer connection, with mute and leave propagating correctly
   and no console errors.

@@ -93,6 +93,8 @@ function joinErrorMessage(code: string): string {
       return "This meeting has been closed.";
     case "INVALID_JOIN_PAYLOAD":
       return "Enter a display name to join this meeting.";
+    case "MEETING_FULL":
+      return "This meeting is full. Please try again once someone leaves.";
     case "RATE_LIMITED":
       return "Too many attempts. Please wait a moment and try again.";
     default:

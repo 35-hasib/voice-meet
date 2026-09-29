@@ -25,6 +25,20 @@ describe("environment configuration", () => {
     ]);
   });
 
+  it("parses the trust proxy setting and defaults to disabled", () => {
+    const base = { DATABASE_URL, FRONTEND_URL: "http://localhost:3000" };
+
+    expect(loadConfig(base).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: "" }).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: "true" }).trustProxy).toBe(true);
+    expect(loadConfig({ ...base, TRUST_PROXY: "1" }).trustProxy).toBe(true);
+    expect(loadConfig({ ...base, TRUST_PROXY: "false" }).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: "2" }).trustProxy).toBe(2);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: "many" })).toThrow(
+      /TRUST_PROXY must be "true", "false", or the number of trusted proxy hops/,
+    );
+  });
+
   it("rejects wildcard CORS configuration", () => {
     expect(() =>
       loadConfig({

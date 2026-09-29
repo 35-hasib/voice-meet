@@ -14,7 +14,7 @@ function bodyOf(response: Response): unknown {
   return body;
 }
 
-function createTestApp(repository: FakeMeetingRepository): Express {
+function createTestApp(repository: FakeMeetingRepository, trustProxy = false): Express {
   let meetingNumber = 0;
   const meetingService = new MeetingService(repository, () => {
     meetingNumber += 1;
@@ -30,6 +30,7 @@ function createTestApp(repository: FakeMeetingRepository): Express {
     meetingService,
     credentialsService,
     frontendUrls: [FRONTEND_URL],
+    trustProxy,
     logger: { info: () => undefined, error: () => undefined },
   });
 }
@@ -141,6 +142,50 @@ describe("meeting API", () => {
         message: "Too many meeting creation requests",
       },
     });
+  });
+
+  it("buckets rate limits per forwarded client when trust proxy is enabled", async () => {
+    const app = createTestApp(new FakeMeetingRepository(), true);
+
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await request(app)
+        .post("/api/meetings")
+        .set("X-Forwarded-For", "203.0.113.1")
+        .send();
+      expect(response.status).toBe(201);
+    }
+
+    const limited = await request(app)
+      .post("/api/meetings")
+      .set("X-Forwarded-For", "203.0.113.1")
+      .send();
+    expect(limited.status).toBe(429);
+
+    const differentClient = await request(app)
+      .post("/api/meetings")
+      .set("X-Forwarded-For", "203.0.113.2")
+      .send();
+    expect(differentClient.status).toBe(201);
+  });
+
+  it("shares one bucket across forwarded clients when trust proxy is disabled", async () => {
+    const app = createTestApp(new FakeMeetingRepository(), false);
+
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await request(app)
+        .post("/api/meetings")
+        .set("X-Forwarded-For", `203.0.113.${String(requestNumber + 1)}`)
+        .send();
+      expect(response.status).toBe(201);
+    }
+
+    // A boxed-in proxy appears to Express as a single client, so a different
+    // forwarded address still shares the same exhausted bucket.
+    const limited = await request(app)
+      .post("/api/meetings")
+      .set("X-Forwarded-For", "203.0.113.99")
+      .send();
+    expect(limited.status).toBe(429);
   });
 
   it("uses an exact CORS allowlist and returns JSON errors", async () => {
