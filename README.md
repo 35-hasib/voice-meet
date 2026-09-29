@@ -521,6 +521,17 @@ Opening a meeting link takes one of two paths:
 | A name is stored but permission is not yet granted | The name is prefilled and the user presses "Join meeting", which is the click that gives the browser the user gesture it needs to show the permission prompt |
 | No name is stored | The empty form, as before |
 
+The name form is not rendered at all while an automatic join is possible. A
+returning user goes from the meeting lookup straight into the room, because a
+form that appears and is immediately replaced reads as a glitch. The waiting
+screen covers the whole of that window, including the case where the permission
+query is still outstanding, so a slow answer cannot reveal the form either. A
+failed automatic join clears the waiting screen and falls back to the prefilled
+form with the microphone error, so it can never strand the user on a spinner.
+
+A first-time visitor is unaffected: with no stored name there is nothing to
+join with automatically, so the form appears as soon as the lookup does.
+
 Auto-join is deliberately gated on permission already being granted. Asking for
 the microphone on page load instead is unreliable in ways that are hard to see:
 Safari refuses a `getUserMedia` call that has no user gesture behind it, and
@@ -1009,9 +1020,10 @@ connections (for example a symmetric NAT or restrictive corporate Wi-Fi).
   leaving.
 - The remembered display name was verified in a real browser: a first visit
   stores the name, a later visit to a different meeting link joins with no
-  typing, leaving the room returns to the lobby instead of re-joining, a browser
-  without microphone permission falls back to the prefilled form, and the dev
-  build logs no hydration warnings.
+  typing, the name form is never rendered for that returning user, leaving the
+  room returns to the home page, a browser without microphone permission falls
+  back to the prefilled form, a failed automatic join recovers to the form
+  instead of hanging, and the dev build logs no hydration warnings.
 - WebRTC was verified in a real browser: two Chromium pages exchange **audible
   audio** over a mesh peer connection, with mute and leave propagating correctly
   and no console errors.

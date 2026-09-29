@@ -81,6 +81,19 @@ function LookupScreen({
   );
 }
 
+function WaitingScreen({ message }: { message: string }): React.JSX.Element {
+  return (
+    <main className="app-shell safe-gutter bg-slate-950">
+      <div className="app-shell-body flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-300">
+          <LoaderCircle aria-hidden="true" className="size-7 animate-spin text-cyan-300" />
+          <p className="text-sm">{message}</p>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export function MeetingLobby({
   meetingCode,
 }: {
@@ -108,6 +121,7 @@ export function MeetingLobby({
 
   const [microphonePermission, setMicrophonePermission] =
     useState<MicrophonePermissionState | null>(null);
+  const [autoJoinFailed, setAutoJoinFailed] = useState(false);
   const autoJoinRef = useRef(false);
 
   useEffect(() => {
@@ -160,7 +174,13 @@ export function MeetingLobby({
     }
 
     autoJoinRef.current = true;
-    void join(name);
+    void join(name).then((joined) => {
+      // A failed automatic join has to hand control back, otherwise the waiting
+      // screen would sit there forever with the microphone error behind it.
+      if (!joined) {
+        setAutoJoinFailed(true);
+      }
+    });
   }, [
     join,
     lookup.status,
@@ -189,16 +209,7 @@ export function MeetingLobby({
   }
 
   if (lookup.status === "loading") {
-    return (
-      <main className="app-shell safe-gutter bg-slate-950">
-        <div className="app-shell-body flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-slate-300">
-            <LoaderCircle aria-hidden="true" className="size-7 animate-spin text-cyan-300" />
-            <p className="text-sm">Looking up this meeting…</p>
-          </div>
-        </div>
-      </main>
-    );
+    return <WaitingScreen message="Looking up this meeting…" />;
   }
 
   if (lookup.status === "not-found") {
@@ -239,6 +250,22 @@ export function MeetingLobby({
         onLeft={handleLeftRoom}
       />
     );
+  }
+
+  // The form is only reachable once the user is definitely going to have to
+  // press Join. Showing it while an automatic join is still in flight is what
+  // produced the flash of a name prompt for people who never needed to see it.
+  // A pending permission query counts as still-deciding, so a slow answer
+  // cannot reveal the form either. First-time visitors are unaffected: with no
+  // stored name there is nothing to auto-join with, so the form appears as soon
+  // as the lookup does.
+  const automaticJoinPending =
+    !autoJoinFailed &&
+    normalizeDisplayName(storedName).length > 0 &&
+    (microphonePermission === null || microphonePermission === "granted");
+
+  if (automaticJoinPending) {
+    return <WaitingScreen message="Joining the meeting…" />;
   }
 
   return (

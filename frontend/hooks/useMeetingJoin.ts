@@ -10,7 +10,7 @@ export interface MeetingJoinController {
   roomName: string;
   isJoining: boolean;
   formError: string | null;
-  join: (name: string) => Promise<void>;
+  join: (name: string) => Promise<boolean>;
   clearError: () => void;
   leaveRoom: () => void;
 }
@@ -35,12 +35,12 @@ export function useMeetingJoin(
   const { start, stop, stream: currentStream } = microphone;
 
   const join = useCallback(
-    async (name: string): Promise<void> => {
+    async (name: string): Promise<boolean> => {
       const normalized = normalizeDisplayName(name);
 
       if (normalized.length === 0) {
         setFormError("Enter your display name before joining.");
-        return;
+        return false;
       }
 
       setIsJoining(true);
@@ -54,15 +54,18 @@ export function useMeetingJoin(
 
       // A refused, missing, or blocked microphone leaves the user in the lobby
       // with their name intact so they can retry or fix the browser setting.
+      // Reporting the failure matters for the automatic join, which uses it to
+      // decide between falling back to the form and waiting forever.
       if (stream === null) {
         setIsJoining(false);
-        return;
+        return false;
       }
 
       storeDisplayName(normalized);
       setRoomName(normalized);
       setRoomStream(stream);
       setIsJoining(false);
+      return true;
     },
     [currentStream, start],
   );
