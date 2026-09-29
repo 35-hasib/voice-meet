@@ -68,10 +68,19 @@ export function StatusPill({
     return (
       <span
         className={`inline-flex size-2 shrink-0 rounded-full border ${content.className}`}
-        role="status"
-        aria-label={content.label}
         title={content.label}
-      />
+      >
+        {/*
+          * A live region needs its label in the text content, not in
+          * `aria-label`: announcements are driven by content changes, so a
+          * connected dot whose label later changes to "Reconnecting" in place
+          * said nothing at all. The visible pill is only a dot, so the text is
+          * visually hidden instead of removed.
+        */}
+        <span role="status" aria-live="polite" className="sr-only">
+          {content.label}
+        </span>
+      </span>
     );
   }
 

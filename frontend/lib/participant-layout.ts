@@ -15,6 +15,39 @@
 
 export type LayoutBreakpoint = "base" | "sm" | "lg";
 
+/**
+ * Tailwind's default breakpoints, as pixel widths.
+ *
+ * These mirror the `sm` and `lg` screens declared in the theme, so the values
+ * used to resolve density in JavaScript agree with the `sm:` and `lg:` prefixes
+ * the grid emits. They are read by `useLayoutBreakpoint` rather than duplicated
+ * per call site.
+ */
+export const LAYOUT_BREAKPOINT_WIDTHS: readonly {
+  readonly name: Exclude<LayoutBreakpoint, "base">;
+  readonly minWidth: number;
+}[] = [
+  { name: "lg", minWidth: 1024 },
+  { name: "sm", minWidth: 640 },
+] as const;
+
+/**
+ * Resolves a viewport width to the breakpoint name the grid classes use.
+ *
+ * Exported so the resolution rule can be unit tested without a DOM, which is the
+ * only way to cover the desktop case that motivated making this breakpoint-aware
+ * in the first place.
+ */
+export function layoutBreakpointForWidth(width: number): LayoutBreakpoint {
+  for (const { minWidth, name } of LAYOUT_BREAKPOINT_WIDTHS) {
+    if (width >= minWidth) {
+      return name;
+    }
+  }
+
+  return "base";
+}
+
 /** Controls how much chrome a card shows, so a dense grid stays legible. */
 export type ParticipantDensity = "comfortable" | "compact" | "dense";
 
@@ -127,14 +160,29 @@ export function participantGridClass(count: number): string {
   return classes.join(" ");
 }
 
-/** Rows implied by the base column count; used to scale the card chrome. */
-export function participantRowCount(count: number): number {
+/**
+ * Rows implied by the column count *at the active breakpoint*.
+ *
+ * Resolving this against the base breakpoint alone is what made every card
+ * phone-shaped on a desktop display: the grid widens to four or five columns
+ * there, but the chrome was still scaled for the two-column phone grid, so a
+ * room of four looked cramped in the middle of a large stage. The breakpoint is
+ * a parameter with a `"base"` default so every existing call site and test keeps
+ * working unchanged.
+ */
+export function participantRowCount(
+  count: number,
+  breakpoint: LayoutBreakpoint = "base",
+): number {
   const total = Math.max(1, Math.floor(count));
-  return Math.ceil(total / participantColumns(total, "base"));
+  return Math.ceil(total / participantColumns(total, breakpoint));
 }
 
-export function participantDensity(count: number): ParticipantDensity {
-  const rows = participantRowCount(count);
+export function participantDensity(
+  count: number,
+  breakpoint: LayoutBreakpoint = "base",
+): ParticipantDensity {
+  const rows = participantRowCount(count, breakpoint);
 
   if (rows <= 1) {
     return "comfortable";
@@ -159,7 +207,10 @@ export type ParticipantCardSize = "hero" | "portrait" | "square" | "fill";
  * lets the grid centre the difference, so a lone participant gets one large
  * square tile and a row of three stays a readable 3:4 rather than a sliver.
  */
-export function participantCardSize(count: number): ParticipantCardSize {
+export function participantCardSize(
+  count: number,
+  breakpoint: LayoutBreakpoint = "base",
+): ParticipantCardSize {
   const total = Math.max(1, Math.floor(count));
 
   if (allowsInternalScrolling(total)) {
@@ -170,7 +221,7 @@ export function participantCardSize(count: number): ParticipantCardSize {
     return "hero";
   }
 
-  return participantRowCount(total) === 1 ? "portrait" : "square";
+  return participantRowCount(total, breakpoint) === 1 ? "portrait" : "square";
 }
 
 /**

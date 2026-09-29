@@ -3,13 +3,17 @@
 import { AlertTriangle, Headphones, Volume2 } from "lucide-react";
 
 /**
- * Floating notice strip.
+ * Notice strip shown above the participant stage.
  *
- * Deliberately overlays the participant stage rather than sitting in the layout
- * flow. A banner in normal flow would push the control bar past the viewport,
- * which is exactly the overflow this screen is built to avoid. Only the highest
- * priority notice is ever shown so the strip can never grow tall enough to cover
- * the stage; the rest are reachable from the meeting menu.
+ * Sits in normal flow and shrinks the stage rather than overlaying it. A
+ * floating strip covered the top of the first row of avatars, which is worst
+ * exactly when the room is crowded enough to need a notice, and a banner in the
+ * flow was previously rejected on the belief that it would push the control bar
+ * off-screen. It does not: the stage is a `min-h-0` flex child, so it absorbs
+ * the difference and the pinned control bar stays put.
+ *
+ * Only the highest priority notice is ever shown so the strip can never grow
+ * tall enough to swallow the stage; the rest are reachable from the meeting menu.
  */
 export function MeetingNotice({
   tone,
@@ -29,20 +33,24 @@ export function MeetingNotice({
   const Icon = tone === "audio" ? Headphones : AlertTriangle;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-3 pt-2">
+    <div className="flex shrink-0 justify-center">
       <div
         role={tone === "error" ? "alert" : "status"}
         data-testid="meeting-notice"
         data-tone={tone}
-        className={`pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg shadow-black/30 backdrop-blur-md ${toneClasses[tone]}`}
+        className={`flex w-full max-w-xl items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg shadow-black/30 backdrop-blur-md ${toneClasses[tone]}`}
       >
         <Icon aria-hidden="true" className="size-4 shrink-0" />
         {/*
-         * truncate with min-w-0 keeps a long backend error from widening the
-         * strip and causing horizontal overflow; the full text stays in `title`.
+         * Two lines rather than `truncate`. These messages are the ones a user
+         * has to act on, and the no-TURN warning is 131 characters: truncated to
+         * a single line it lost the sentence explaining what to do, and the
+         * `title` fallback that was meant to compensate is invisible on touch,
+         * which is where this app is mostly used. `min-w-0` still stops a long
+         * backend error from widening the strip.
          */}
-        <p className="min-w-0 flex-1 truncate text-xs" title={message}>
-          {message}
+        <p className="min-w-0 flex-1 text-xs leading-5" title={message}>
+          <span className="line-clamp-2">{message}</span>
         </p>
         {action !== undefined ? (
           <button

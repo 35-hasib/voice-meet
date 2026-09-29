@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import {
   Mic,
   MicOff,
@@ -68,21 +69,31 @@ function ControlButton({
   pressed?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
+  const hintId = useId();
+
   return (
     <span className="group relative shrink-0">
       <button
         type="button"
         onClick={onClick}
         aria-label={label}
+        /*
+         * The tooltip is linked as a description rather than left orphaned. A
+         * `role="tooltip"` with no `aria-describedby` pointing at it is announced
+         * by nothing, so the visual hint and the accessible name could disagree
+         * without anyone noticing.
+         */
+        aria-describedby={hintId}
         {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
         className={`${controlButton} ${toneClass[tone]}`}
       >
         {children}
       </button>
       <span
+        id={hintId}
         role="tooltip"
         data-testid="control-tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-slate-800/95 px-2 py-1 text-[0.6875rem] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-slate-800/95 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
       >
         {hint}
       </span>

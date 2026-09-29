@@ -14,7 +14,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   Radio,
-  Sparkles,
+  Share2,
 } from "lucide-react";
 import { createMeeting } from "@/lib/meeting-api";
 import { buildMeetingLink, extractMeetingCode } from "@/lib/validation";
@@ -34,6 +34,36 @@ export function HomePage(): React.JSX.Element {
   const [meetingLink, setMeetingLink] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * Native share when the browser has it.
+   *
+   * The whole point of this screen is handing a link to someone else, and on a
+   * phone that means the share sheet: it reaches WhatsApp, Messages, and email
+   * without a copy-and-paste round trip, and it brings the app back to the
+   * foreground. `canShare` is read during render rather than in an effect so a
+   * client-only capability never changes the server-rendered markup.
+   */
+  const canShare =
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function";
+
+  const handleShare = async (): Promise<void> => {
+    try {
+      await navigator.share({
+        title: "AudioMeet",
+        text: "Join my AudioMeet audio room",
+        url: meetingLink,
+      });
+    } catch (shareError: unknown) {
+      // A user dismissing the sheet is not a failure, so it is not reported.
+      if (shareError instanceof DOMException && shareError.name === "AbortError") {
+        return;
+      }
+
+      setError("Unable to share. Copy the link instead.");
+    }
+  };
 
   const handleCreate = async (): Promise<void> => {
     setIsCreating(true);
@@ -82,8 +112,8 @@ export function HomePage(): React.JSX.Element {
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between">
         <BrandMark />
         <span className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 sm:inline-flex">
-          <Sparkles aria-hidden="true" className="size-3.5 text-cyan-300" />
-          Audio-first MVP
+          <LockKeyhole aria-hidden="true" className="size-3.5 text-cyan-300" />
+          No account needed
         </span>
       </header>
 
@@ -124,8 +154,15 @@ export function HomePage(): React.JSX.Element {
                 )}
                 {isCreating ? "Creating room…" : "Create meeting"}
               </button>
-              <span className="hidden h-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-6 text-sm text-slate-300 sm:inline-flex">
-                Permanent link included
+              {/*
+                Plain supporting text, not a second control-shaped chip. It sat
+                next to the primary button in a bordered box at button height,
+                so it read as a disabled button — and "Permanent link included" is
+                a property of the app, not an action the visitor can take.
+              */}
+              <span className="inline-flex h-12 items-center justify-center gap-2 text-sm text-slate-400 sm:px-2">
+                <Link2 aria-hidden="true" className="size-4 text-cyan-200" />
+                A permanent link, every time
               </span>
             </div>
 
@@ -180,7 +217,26 @@ export function HomePage(): React.JSX.Element {
                   />
                 </div>
 
-                <div className="grid gap-2.5 sm:grid-cols-2">
+                {/*
+                  * Share first when available. The link is the product here, and
+                  * on a phone the share sheet is the shortest path from "created"
+                  * to "someone is in the room".
+                  */}
+                <div
+                  className={`grid gap-2.5 ${canShare ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+                >
+                  {canShare ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleShare();
+                      }}
+                      className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-cyan-300 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+                    >
+                      <Share2 aria-hidden="true" className="size-4" />
+                      Share
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {
@@ -195,18 +251,34 @@ export function HomePage(): React.JSX.Element {
                     )}
                     {copied ? "Link copied!" : "Copy link"}
                   </button>
+                  {/*
+                    * Same cyan treatment as "Create meeting" and the lobby's
+                    * "Join meeting". It was white while the create button on the
+                    * same page was cyan, so the two ways into a room looked like
+                    * different products.
+                    */}
                   <Link
                     href={`/meet/${createdMeeting.meetingCode}`}
-                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-cyan-300 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+                    className={`inline-flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition ${
+                      canShare
+                        ? "border border-white/10 bg-white/5 text-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+                        : "bg-cyan-300 text-slate-950 hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+                    }`}
                   >
                     Join meeting
                     <ArrowRight aria-hidden="true" className="size-4" />
                   </Link>
                 </div>
-                {clipboardError !== null ? (
-                  <p className="text-xs text-amber-200" role="alert">
-                    {clipboardError}
-                  </p>
+                {/*
+                  * Clipboard failures are announced here rather than only
+                  * changing the button label, because a failure is the one case
+                  * where "Link copied!" never appears and the screen otherwise
+                  * looks identical to before the tap.
+                */}
+                {clipboardError !== null || error !== null ? (
+                  <AlertBanner>
+                    {clipboardError ?? error ?? "Unable to create a meeting."}
+                  </AlertBanner>
                 ) : null}
                 <button
                   type="button"
@@ -214,7 +286,7 @@ export function HomePage(): React.JSX.Element {
                     setCreatedMeeting(null);
                     setError(null);
                   }}
-                  className="w-full text-center text-xs text-slate-500 transition hover:text-slate-300"
+                  className="w-full text-center text-xs text-slate-400 transition hover:text-slate-200"
                 >
                   Create another meeting
                 </button>
@@ -257,7 +329,7 @@ export function HomePage(): React.JSX.Element {
                   </div>
                   <button
                     type="submit"
-                    className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-slate-950 transition hover:bg-cyan-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+                    className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
                   >
                     Join meeting
                     <ArrowRight aria-hidden="true" className="size-4" />
@@ -281,9 +353,16 @@ export function HomePage(): React.JSX.Element {
         </div>
       </section>
 
-      <footer className="mx-auto flex w-full max-w-6xl flex-col gap-1.5 px-1 text-[0.6875rem] text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:text-xs">
+      {/*
+        * No stack names. "WebRTC mesh · Socket.IO signaling · PostgreSQL meeting
+        * registry" described the implementation to whoever was already familiar
+        * with it and told a first-time visitor nothing; it is the kind of detail
+        * that belongs in a README, not the only reassurance in the footer. What is
+        * left is the claim that actually matters to a visitor: nothing is kept.
+        */}
+      <footer className="mx-auto flex w-full max-w-6xl flex-col gap-1.5 px-1 text-[0.6875rem] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:text-xs">
         <span>Audio only. No recording. No storage of microphone audio.</span>
-        <span>WebRTC mesh · Socket.IO signaling · PostgreSQL meeting registry</span>
+        <span>Works in any modern browser. Nothing to install.</span>
       </footer>
     </main>
   );

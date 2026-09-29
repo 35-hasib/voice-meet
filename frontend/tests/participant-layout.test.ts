@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   allowsInternalScrolling,
   centresParticipantGrid,
+  LAYOUT_BREAKPOINT_WIDTHS,
+  layoutBreakpointForWidth,
   MAX_CARDS_WITHOUT_SCROLL,
   participantCardSize,
   participantColumns,
@@ -9,6 +11,34 @@ import {
   participantGridClass,
   participantRowCount,
 } from "../lib/participant-layout.js";
+
+describe("layoutBreakpointForWidth", () => {
+  it("treats anything below the first screen as base", () => {
+    expect(layoutBreakpointForWidth(0)).toBe("base");
+    expect(layoutBreakpointForWidth(375)).toBe("base");
+    expect(layoutBreakpointForWidth(639)).toBe("base");
+  });
+
+  it("switches at exactly the widths Tailwind uses", () => {
+    // Off by one here means the JS geometry and the CSS grid disagree by one
+    // viewport, which is the whole failure this function exists to prevent.
+    expect(layoutBreakpointForWidth(640)).toBe("sm");
+    expect(layoutBreakpointForWidth(1023)).toBe("sm");
+    expect(layoutBreakpointForWidth(1024)).toBe("lg");
+    expect(layoutBreakpointForWidth(2560)).toBe("lg");
+  });
+
+  it("resolves the widest matching screen first, not the first match", () => {
+    // The list is ordered widest-first precisely so a desktop cannot be reported
+    // as `sm` just because `sm` appears earlier in the array.
+    const widths = [...LAYOUT_BREAKPOINT_WIDTHS].map(({ minWidth }) => minWidth);
+    expect(widths).toEqual([...widths].sort((a, b) => b - a));
+
+    for (const { minWidth, name } of LAYOUT_BREAKPOINT_WIDTHS) {
+      expect(layoutBreakpointForWidth(minWidth)).toBe(name);
+    }
+  });
+});
 
 describe("participantColumns", () => {
   it("gives a solo participant the whole stage", () => {
@@ -85,6 +115,35 @@ describe("participantRowCount and participantDensity", () => {
     expect(participantRowCount(9)).toBe(3);
     expect(participantDensity(9)).toBe("dense");
   });
+
+  it("resolves rows against the active breakpoint, not the phone one", () => {
+    // Four participants is two columns on a phone (two rows) but three on a
+    // tablet and three on a desktop, so the same room reported a different shape
+    // depending on screen size. Resolving at the active breakpoint is what stops
+    // a desktop grid from being laid out with phone-density chrome.
+    expect(participantRowCount(4, "base")).toBe(2);
+    expect(participantRowCount(4, "sm")).toBe(2);
+    expect(participantRowCount(4, "lg")).toBe(2);
+
+    // Six participants: three columns everywhere, so two rows at every width.
+    expect(participantRowCount(6, "base")).toBe(2);
+    expect(participantRowCount(6, "lg")).toBe(2);
+
+    // Two participants stay on one row at every breakpoint.
+    expect(participantRowCount(2, "base")).toBe(1);
+    expect(participantRowCount(2, "lg")).toBe(1);
+  });
+
+  it("lets density improve as the grid gains columns", () => {
+    // Ten participants: four columns on a phone (three rows, dense) but six on a
+    // desktop (two rows, compact), so the wider screen gets genuinely less
+    // cluttered cards rather than the same dense treatment in more space.
+    expect(participantDensity(10, "base")).toBe("dense");
+    expect(participantDensity(10, "lg")).toBe("compact");
+
+    expect(participantDensity(2, "base")).toBe("comfortable");
+    expect(participantDensity(2, "lg")).toBe("comfortable");
+  });
 });
 
 describe("allowsInternalScrolling", () => {
@@ -127,6 +186,23 @@ describe("participantCardSize", () => {
   it("treats a malformed count as a single participant", () => {
     expect(participantCardSize(0)).toBe("hero");
     expect(participantCardSize(-3)).toBe("hero");
+  });
+
+  it("widens a single row to portrait only where the grid really is one row", () => {
+    // Two participants are one row at every breakpoint, so the shape is stable.
+    expect(participantCardSize(2, "base")).toBe("portrait");
+    expect(participantCardSize(2, "lg")).toBe("portrait");
+
+    // Four participants stay two rows everywhere, so they remain square; the
+    // breakpoint must not quietly promote them to a tall, sliver-prone shape.
+    expect(participantCardSize(4, "base")).toBe("square");
+    expect(participantCardSize(4, "lg")).toBe("square");
+  });
+
+  it("keeps the scrolling list filling the viewport at every breakpoint", () => {
+    // A card aspect ratio would fight the viewport-decided row height here.
+    expect(participantCardSize(7, "base")).toBe("fill");
+    expect(participantCardSize(7, "lg")).toBe("fill");
   });
 });
 

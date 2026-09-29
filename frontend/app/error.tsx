@@ -1,31 +1,41 @@
 "use client";
 
-import { BrandMark } from "@/components/brand-mark";
+import { useCallback } from "react";
+import { StatusScreen } from "@/components/status-screen";
 
+/**
+ * Route-level error boundary.
+ *
+ * Built on the shared `StatusScreen` so a failure here is visually identical to
+ * every other dead end in the app. It previously carried its own hand-rolled
+ * card with a different radius, padding, and button colour, which is how a
+ * shared status screen quietly stops being shared.
+ *
+ * `retry` is the current prop; `reset` is kept as a fallback so this keeps
+ * working if the boundary is ever rendered by a caller that only supplies it.
+ */
 export default function RouteError({
+  error,
+  retry,
   reset,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry?: () => void;
+  reset?: () => void;
 }): React.JSX.Element {
+  const handleRetry = useCallback((): void => {
+    (retry ?? reset)?.();
+  }, [reset, retry]);
+
   return (
-    <main className="flex min-h-dvh items-center justify-center px-5">
-      <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-900/70 p-7 text-center">
-        <div className="mx-auto mb-5 w-fit">
-          <BrandMark />
-        </div>
-        <h1 className="text-2xl font-semibold text-white">Something went wrong</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-400">
-          The page hit an unexpected error. Reloading the view usually resolves it.
-        </p>
-        <button
-          type="button"
-          onClick={reset}
-          className="mt-7 inline-flex h-11 items-center justify-center rounded-2xl bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-50"
-        >
-          Try again
-        </button>
-      </div>
-    </main>
+    <StatusScreen
+      title="Something went wrong"
+      message="The page hit an unexpected error. Trying again usually resolves it."
+      // The digest is a server-side correlation id, not user-facing copy, so it
+      // is never shown as if it were a reason the error happened.
+      eyebrow={error.digest === undefined ? undefined : "Unexpected error"}
+      primaryAction={{ label: "Back to home", href: "/" }}
+      secondaryAction={{ label: "Try again", onClick: handleRetry }}
+    />
   );
 }

@@ -108,6 +108,82 @@ input {
   display: none;
 }
 
+/*
+ * Scroll affordance for the participant stage.
+ *
+ * The list scrolls with a hidden scrollbar, so with no visual cue a crowded room
+ * looked identical to one where everyone already fit, and the people below the
+ * fold were simply invisible.
+ *
+ * Driven by a scroll timeline rather than a class toggled from measured
+ * overflow, for two reasons. It fades the edge only while there is actually
+ * something scrolled off it, and a mask is paint-only, so it cannot change the
+ * card geometry the layout tests measure. Where scroll timelines are
+ * unsupported the mask simply never applies and the stage behaves exactly as it
+ * did before.
+ */
+@supports (animation-timeline: scroll()) {
+  .scroll-fade {
+    animation: scroll-fade-mask linear both;
+    animation-timeline: scroll(self block);
+  }
+
+  @keyframes scroll-fade-mask {
+    0% {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        #000 1.5rem,
+        #000 calc(100% - 2.5rem),
+        transparent 100%
+      );
+    }
+    12% {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        #000 1.5rem,
+        #000 calc(100% - 1.5rem),
+        transparent 100%
+      );
+    }
+    88% {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 1.5rem,
+        #000 calc(100% - 1.5rem),
+        #000 100%,
+        transparent 100%
+      );
+    }
+    100% {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 1.5rem,
+        #000 calc(100% - 1.5rem),
+        #000 100%,
+        transparent 100%
+      );
+    }
+  }
+}
+
+/*
+ * Windows High Contrast and forced-colors mode strip background colours, which
+ * leaves every surface in this app — chips, cards, banners, the control bar —
+ * rendered as the same flat fill with no edges between them. Restoring the
+ * borders keeps the layout legible when the palette is taken away.
+ */
+@media (forced-colors: active) {
+  .app-shell * {
+    border-color: CanvasText;
+  }
+
+  .app-shell :focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

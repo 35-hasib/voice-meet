@@ -1,6 +1,5 @@
 "use client";
 
-import { useSpeakingIndicator } from "@/hooks/useSpeakingIndicator";
 import { Mic, MicOff, TriangleAlert, LoaderCircle } from "lucide-react";
 import { getInitials } from "@/lib/validation";
 import type { ParticipantDensity } from "@/lib/participant-layout";
@@ -49,17 +48,22 @@ function connectionLabel(
  * on a tall stage but overflows a narrow card, because three participants on a
  * phone leave each card barely wider than the avatar would be. The card clips its
  * overflow, so without the width term the initials get cut off at the edges.
+ *
+ * `cqi` rather than `dvh` for the type so the initials follow the card they sit
+ * in. Viewport units ignore the user's font-size preference, so a user who has
+ * raised their default text size got unchanged initials; a container unit scales
+ * with the card and keeps the `rem` floor doing the accessibility work.
  */
 const avatarSize: Record<ParticipantDensity, string> = {
-  comfortable: "size-[min(26dvh,60%)] text-[clamp(1rem,5.5dvh,2.5rem)]",
-  compact: "size-[min(15dvh,55%)] text-[clamp(0.875rem,4dvh,1.5rem)]",
-  dense: "size-[min(11dvh,50%)] text-[clamp(0.75rem,3dvh,1.125rem)]",
+  comfortable: "size-[min(30cqi,60%)] text-[clamp(1.125rem,13cqi,3rem)]",
+  compact: "size-[min(28cqi,55%)] text-[clamp(0.9375rem,10cqi,2rem)]",
+  dense: "size-[min(26cqi,50%)] text-[clamp(0.8125rem,8cqi,1.375rem)]",
 };
 
 const nameSize: Record<ParticipantDensity, string> = {
   comfortable: "text-base sm:text-lg",
   compact: "text-sm",
-  dense: "text-[0.6875rem]",
+  dense: "text-xs",
 };
 
 /**
@@ -72,9 +76,11 @@ const nameSize: Record<ParticipantDensity, string> = {
  * `portrait`  two or three side by side: 3:4 uses the extra height gracefully.
  * `square`    grids with a second row: 1:1 reads better than a stretched cell.
  * `fill`      scrollable grids only, where the viewport dictates the row height.
+ *
+ * The card is a container query root so the avatar can be sized in `cqi`.
  */
 const sizeClass = {
-  hero: "mx-auto aspect-square max-h-full w-full max-w-[26rem] self-center",
+  hero: "mx-auto aspect-square max-h-full w-full max-w-[26rem] self-center lg:max-w-[34rem]",
   portrait: "aspect-[3/4] max-h-full self-center",
   square: "aspect-square max-h-full self-center",
   fill: "h-full",
@@ -84,7 +90,8 @@ export function ParticipantCard({
   name,
   muted,
   isSelf,
-  stream,
+  speaking,
+  promoted = false,
   connectionState,
   density = "comfortable",
   size = "fill",
@@ -92,44 +99,75 @@ export function ParticipantCard({
   name: string;
   muted: boolean;
   isSelf: boolean;
-  stream: MediaStream | null;
+  /**
+   * Speaking state, decided by the room rather than by the card.
+   *
+   * The card used to measure its own audio, which made "who is speaking" a
+   * question no single component could answer. Levels are now compared across
+   * every stream by the room, so the card is told the answer.
+   */
+  speaking: boolean;
+  /**
+   * The loudest speaker in the room, when the layout can express it.
+   *
+   * In a voice-only call "who is talking" is the most important thing on screen,
+   * and a subtle border change on one card out of twelve is easy to miss. The
+   * promoted card gets a ring and a caption instead.
+   */
+  promoted?: boolean;
   connectionState?: RtcConnectionState;
   density?: ParticipantDensity;
-  /**
-   * Bounds the card so a stage that is much taller than it is wide cannot turn
-   * every participant into a tall sliver. `fill` is only used once the grid has
-   * to scroll, where the row height is dictated by the viewport instead.
-   */
   size?: "hero" | "portrait" | "square" | "fill";
 }): React.JSX.Element {
-  const isSpeaking = useSpeakingIndicator(stream, !muted && stream !== null);
   const networkLabel = isSelf ? null : connectionLabel(connectionState);
 
   return (
     <article
       data-testid="participant-card"
-      className={`relative flex min-h-0 w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border p-2 text-center transition-[border-color,background-color,box-shadow] duration-200 sm:gap-1.5 sm:rounded-3xl sm:p-3 ${sizeClass[size]} ${
-        isSpeaking
-          ? "border-cyan-300/55 bg-cyan-300/[0.09] shadow-[0_0_36px_-16px_rgba(103,232,249,0.85)]"
-          : "border-white/10 bg-white/[0.045]"
+      data-self={isSelf}
+      data-speaking={speaking}
+      data-promoted={promoted}
+      className={`@container relative flex min-h-0 w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border p-2 text-center transition-[border-color,background-color,box-shadow] duration-200 sm:gap-1.5 sm:rounded-3xl sm:p-3 ${sizeClass[size]} ${
+        promoted
+          ? "border-cyan-300/70 bg-cyan-300/[0.13] shadow-[0_0_48px_-14px_rgba(103,232,249,0.95)]"
+          : speaking
+            ? "border-cyan-300/55 bg-cyan-300/[0.09]"
+            : "border-white/10 bg-white/[0.045]"
+      } ${
+        /*
+         * The self marker has to survive every density. It used to be a caption
+         * shown only at the comfortable size, so from five participants upward a
+         * user could no longer tell which card was theirs — and mute acts on the
+         * card you press, so that ambiguity has a cost.
+         */
+        isSelf
+          ? "ring-1 ring-inset ring-white/20"
+          : ""
       }`}
     >
       <div
         data-testid="participant-avatar"
         className={`relative grid shrink-0 place-items-center rounded-full bg-gradient-to-br font-semibold transition-[box-shadow,opacity,filter] duration-200 ${avatarSize[density]} ${toneFor(name)} ${
-          isSpeaking
+          speaking
             ? "shadow-[0_0_0_3px_rgba(103,232,249,0.28),0_0_0_6px_rgba(103,232,249,0.12)]"
             : "shadow-[0_0_0_1px_rgba(255,255,255,0.14)]"
         } ${muted ? "opacity-55 saturate-50" : ""}`}
       >
-        {getInitials(name)}
+        {/*
+          * `role="img"` gives the initials an accessible name. Without it the
+          * avatar is a bare text node, so a screen reader announces the name twice
+          * and the initials are not reliably announced at all.
+        */}
+        <span role="img" aria-label={`${name} avatar`}>
+          {getInitials(name)}
+        </span>
 
         {/*
-         * Mute needs to be readable at a glance on someone else's card, so it is
-         * repeated on the avatar itself. A small badge under the name is easy to
-         * miss, which made a working mute look like it had not been applied. This
-         * copy is decorative: the labelled badge below carries the accessible name.
-         */}
+          * Mute has to be readable at a glance on someone else's card, so it is
+          * repeated on the avatar itself. A small badge under the name is easy to
+          * miss, which made a working mute look like it had not been applied. This
+          * copy is decorative: the labelled badge below carries the accessible name.
+        */}
         {muted ? (
           <span
             aria-hidden="true"
@@ -142,10 +180,10 @@ export function ParticipantCard({
       </div>
 
       {/*
-       * min-w-0 lets the name truncate instead of widening the card, and
-       * truncate keeps a long name from wrapping and pushing the card taller than
-       * its grid row.
-       */}
+        * min-w-0 lets the name truncate instead of widening the card, and
+        * truncate keeps a long name from wrapping and pushing the card taller than
+        * its grid row.
+        */}
       <div className="relative flex w-full min-w-0 flex-col items-center">
         <p
           className={`w-full truncate font-semibold text-white ${nameSize[density]}`}
@@ -153,9 +191,24 @@ export function ParticipantCard({
         >
           {name}
         </p>
-        {density === "comfortable" ? (
-          <p className="mt-0.5 text-[0.6875rem] font-medium uppercase tracking-[0.18em] text-slate-400">
-            {isSelf ? "You" : "Participant"}
+        {/*
+         * Only the self state is captioned. "Participant" was rendered for
+         * everyone else, which carried no information and competed with the two
+         * captions that do matter.
+         */}
+        {isSelf ? (
+          <p
+            data-testid="participant-self-label"
+            className="mt-0.5 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200"
+          >
+            You
+          </p>
+        ) : promoted ? (
+          <p
+            data-testid="participant-speaking-label"
+            className="mt-0.5 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200"
+          >
+            Speaking
           </p>
         ) : null}
       </div>
@@ -173,19 +226,23 @@ export function ParticipantCard({
           title={muted ? "Muted" : "Microphone on"}
         >
           {muted ? (
-            <MicOff aria-label="Muted" className="size-3 sm:size-3.5" />
+            <MicOff
+              role="img"
+              aria-label="Muted"
+              className="size-3 sm:size-3.5"
+            />
           ) : (
-            <Mic aria-label="Microphone on" className="size-3 sm:size-3.5" />
+            <Mic role="img" aria-label="Microphone on" className="size-3 sm:size-3.5" />
           )}
         </span>
         {/*
-         * The word, not just the icon. There is room for it at every density except
-         * the crowded one, where the avatar badge carries the message instead.
+          * The word, not just the icon. There is room for it at every density except
+          * the crowded one, where the avatar badge carries the message instead.
          */}
         {muted && density !== "dense" ? (
           <span
             data-testid="participant-muted-label"
-            className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-rose-200"
+            className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-200"
           >
             Muted
           </span>
@@ -199,11 +256,13 @@ export function ParticipantCard({
           >
             {networkLabel === "Connecting" ? (
               <LoaderCircle
+                role="img"
                 aria-label="Connecting"
                 className="size-3 animate-spin sm:size-3.5"
               />
             ) : (
               <TriangleAlert
+                role="img"
                 aria-label={networkLabel}
                 className="size-3 sm:size-3.5"
               />

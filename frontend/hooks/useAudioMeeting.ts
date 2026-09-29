@@ -102,6 +102,21 @@ function joinErrorMessage(code: string): string {
   }
 }
 
+/**
+ * Rejections the server will never accept on a retry without the user changing
+ * something, so they belong on the join form rather than inside the room.
+ *
+ * A full room is the important case: the cap is checked when the socket join is
+ * acknowledged, which happens after the lobby has already handed the stream to
+ * the room. Surfacing it as a room banner put the user in a call they were never
+ * admitted to, on a screen whose only exit was Leave. Returning it to the lobby
+ * puts the message next to the name field and the Join button, which is the only
+ * place the user can actually do something about it.
+ */
+function isRecoverableJoinRejection(code: string): boolean {
+  return code === "MEETING_FULL";
+}
+
 function connectionStateFor(
   connection: RTCPeerConnection,
 ): RtcConnectionState {
@@ -112,8 +127,14 @@ export function useAudioMeeting(options: {
   meetingCode: string;
   displayName: string;
   stream: MediaStream;
+  /**
+   * Called when the server refuses the join in a way the user can act on from
+   * the lobby. The room is torn down by the caller, so the message appears on
+   * the join form rather than stranded in a call the user was not admitted to.
+   */
+  onJoinRejected?: (message: string) => void;
 }): AudioMeetingController {
-  const { displayName, meetingCode, stream } = options;
+  const { displayName, meetingCode, onJoinRejected, stream } = options;
   const [status, setStatus] = useState<MeetingConnectionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [iceWarning, setIceWarning] = useState<string | null>(null);
@@ -563,8 +584,13 @@ export function useAudioMeeting(options: {
         }
 
         if (!result.ok) {
+          const message = joinErrorMessage(result.error.code);
           setStatus("failed");
-          setError(joinErrorMessage(result.error.code));
+          setError(message);
+
+          if (isRecoverableJoinRejection(result.error.code)) {
+            onJoinRejected?.(message);
+          }
         }
       });
     };
@@ -643,6 +669,7 @@ export function useAudioMeeting(options: {
     handleMeetingJoined,
     handleOffer,
     meetingCode,
+    onJoinRejected,
   ]);
 
   const toggleMute = useCallback((): void => {

@@ -12,6 +12,15 @@ export interface MeetingJoinController {
   formError: string | null;
   join: (name: string) => Promise<boolean>;
   clearError: () => void;
+  /**
+   * Shows a message on the join form from outside the join attempt itself.
+   *
+   * The room's socket join is the only place the server can report a full room,
+   * so the rejection has to travel back out to the form. Setting it here, rather
+   * than in separate lobby state, keeps a single error surface: the user never
+   * sees two competing messages in the same screen.
+   */
+  showError: (message: string) => void;
   leaveRoom: () => void;
 }
 
@@ -74,6 +83,10 @@ export function useMeetingJoin(
     setFormError(null);
   }, []);
 
+  const showError = useCallback((message: string): void => {
+    setFormError(message);
+  }, []);
+
   const leaveRoom = useCallback((): void => {
     setRoomStream(null);
     setRoomName("");
@@ -87,6 +100,7 @@ export function useMeetingJoin(
     formError,
     join,
     clearError,
+    showError,
     leaveRoom,
   };
 }
